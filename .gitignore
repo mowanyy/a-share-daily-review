@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# 数据与输出（下载的数据/生成的复盘不入库，目录占位 .gitkeep 保留）
+data/*/
+output/*/
+*.csv
+
+# 本地配置
+.env
