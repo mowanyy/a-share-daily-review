@@ -69,6 +69,14 @@ def _print_summary(ind: dict) -> None:
         )
     print(f"炸板资金流表 {len(ind['break'].get('table', []))} 行")
 
+    emo = ind.get("emotion") or {}
+    if emo.get("available"):
+        print(f"情绪温度 {emo.get('score')} 分 / 周期 {emo.get('stage')}")
+        if emo.get("notes"):
+            print(f"情绪备注: {'; '.join(emo['notes'])}")
+    else:
+        print("情绪温度 数据不足")
+
     lhb = ind.get("lhb") or {}
     ov = lhb.get("overview") or {}
     if ov.get("stock_count"):

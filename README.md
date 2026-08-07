@@ -1,8 +1,8 @@
 # 每日复盘 · 超短连板复盘系统
 
-> 基于 Python 的 A 股收盘后复盘工具，聚焦**超短连板**风格：连板梯队、题材运行周期、炸板资金、龙虎榜游资，并为「个人战法 → AI 次日预案」预留扩展位。
+> 基于 Python 的 A 股收盘后复盘工具，聚焦**超短连板**风格：情绪温度、连板梯队、题材运行周期、炸板资金、龙虎榜游资，并为「个人战法 → AI 次日预案」预留扩展位。
 
-**当前阶段**：`v0.4 · 端到端复盘已可用`（东财池子/资金流/龙虎榜采集 → 连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；问答模式与个人战法下期）
+**当前阶段**：`v0.5 · 端到端复盘已可用`（东财池子/资金流/龙虎榜采集 → 情绪温度/连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；问答模式与个人战法下期）
 
 ---
 
@@ -37,14 +37,14 @@
 ├── prompts/            # ★ Prompt 工程核心
 │   ├── INDEX.md        #   Prompt 总索引
 │   ├── system/         #   角色级 prompt（复盘分析师 / 问答助手）
-│   ├── modules/        #   分析模块 prompt（连板梯队/题材/炸板/次日预案）
+│   ├── modules/        #   分析模块 prompt（情绪温度/连板梯队/题材/炸板/龙虎榜/次日预案）
 │   ├── strategies/     #   战法库（可插拔）
 │   ├── examples/       #   Few-shot 示例
 │   ├── glossary/       #   术语表
 │   └── tools/          #   问答模式工具定义
 ├── src/daily_review/   # Python 包
 │   ├── data/           #   采集层：eastmoney_pool（池子/资金流/板块）eastmoney_lhb（龙虎榜）hotmoney_seats（游资名单）eastmoney sina repo http_client
-│   ├── analysis/       #   指标层：ladder（连板梯队）theme（题材周期）break_flow（炸板资金）lhb（游资分析）
+│   ├── analysis/       #   指标层：emotion（情绪温度）ladder（连板梯队）theme（题材周期）break_flow（炸板资金）lhb（游资分析）
 │   ├── llm/            #   LLM 层：client（DeepSeek）reporter（模块 prompt 组装报告）
 │   ├── pipeline.py     #   管道：采集 → 指标 → 报告
 │   └── cli.py          #   CLI：kline / realtime / review

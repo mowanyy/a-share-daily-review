@@ -12,7 +12,7 @@ from typing import Callable
 
 import pandas as pd
 
-from daily_review.analysis import analyze_break, analyze_lhb, build_themes, compute_ladder
+from daily_review.analysis import analyze_break, analyze_lhb, build_themes, compute_emotion, compute_ladder
 from daily_review.config import get_settings
 from daily_review.data import eastmoney_lhb, eastmoney_pool as em
 from daily_review.data.repo import load_csv, save_csv
@@ -65,6 +65,18 @@ def _cached(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame]) ->
     return df
 
 
+def _fetch_opt(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame]) -> tuple[pd.DataFrame, bool]:
+    """带成功标志的缓存拉取：失败返回 (空表, False)，绝不中断 collect。
+
+    供情绪温度区分「真实 0 家」（_ok=True 且空表 → 该维记满分）与「数据缺失」
+    （_ok=False → 该维剔除重归一）。
+    """
+    try:
+        return _cached(name, trade_date, fetch_fn), True
+    except Exception:
+        return _empty_df(["trade_date", "code"]), False
+
+
 def _build_concept_map(zt_codes: list[str], trade_date: str) -> dict[str, list[str]]:
     """当日涨停股 → 概念标签（取涨幅前 N 的概念板块成分交集，best-effort）。"""
     try:
@@ -90,15 +102,10 @@ def collect(trade_date: str) -> dict:
     """采集指定交易日全部输入数据（含时间线）。返回结构化 dict。"""
     print(f"[采集] 交易日 {trade_date}")
 
-    # 1. 当日池子
+    # 1. 当日池子（zb/dt 带抓取成功标志，供情绪温度区分「0 家」与「缺失」）
     zt = _cached("zt_pool", trade_date, lambda: em.fetch_zt_pool(trade_date))
-    zb = _cached("zb_pool", trade_date, lambda: em.fetch_zb_pool(trade_date))
-    try:
-        dt = em.fetch_dt_pool(trade_date)
-        if not dt.empty:
-            save_csv(dt, "dt_pool", trade_date)
-    except Exception:
-        dt = _empty_df(["trade_date", "code", "name", "up_pct"])
+    zb, zb_ok = _fetch_opt("zb_pool", trade_date, lambda: em.fetch_zb_pool(trade_date))
+    dt, dt_ok = _fetch_opt("dt_pool", trade_date, lambda: em.fetch_dt_pool(trade_date))
     print(f"  涨停 {len(zt)} / 炸板 {len(zb)} / 跌停 {len(dt)}")
 
     # 2. 时间线：近 N 交易日（由近及远），含每日本身池子（缓存复用）
@@ -120,6 +127,13 @@ def collect(trade_date: str) -> dict:
     # 晋级用：昨日池子（timeline 第 2 新 = 最新历史日）；旧→新给题材时序
     prev_pools = [(d, p) for d, p in reversed(timeline) if d != trade_date]
     prev_zt = prev_pools[-1][1] if prev_pools else _empty_df(list(zt.columns))
+
+    # 情绪温度历史日（旧→新，与 prev_pools 同序）：每日本身 zt/zb/dt + 抓取成功标志
+    hist_days: list[dict] = []
+    for d, pool in prev_pools:
+        zb_i, ok_zb = _fetch_opt("zb_pool", d, lambda d=d: em.fetch_zb_pool(d))
+        dt_i, ok_dt = _fetch_opt("dt_pool", d, lambda d=d: em.fetch_dt_pool(d))
+        hist_days.append({"date": d, "zt": pool, "zb": zb_i, "dt": dt_i, "zb_ok": ok_zb, "dt_ok": ok_dt})
 
     # 3. 行业全名映射（best-effort，池内 hybk 兜底）
     industry_map: dict[str, str] = {}
@@ -160,6 +174,9 @@ def collect(trade_date: str) -> dict:
         lhb_seats = _empty_df(eastmoney_lhb.LHB_SEAT_COLUMNS)
     print(f"  龙虎榜 {len(lhb_daily)} 条 / 席位 {len(lhb_seats)} 条")
 
+    # 盘中标记：当日且当前时间 < 15:00（情绪温度记「盘中预览」）
+    is_intraday = trade_date == datetime.now().strftime("%Y%m%d") and datetime.now().hour < 15
+
     return {
         "trade_date": trade_date,
         "zt": zt,
@@ -172,6 +189,10 @@ def collect(trade_date: str) -> dict:
         "moneyflow": moneyflow,
         "lhb_daily": lhb_daily,
         "lhb_seats": lhb_seats,
+        "hist_days": hist_days,
+        "zb_ok": zb_ok,
+        "dt_ok": dt_ok,
+        "is_intraday": is_intraday,
         "timeline_dates": dates,
     }
 
@@ -180,6 +201,7 @@ def compute(collected: dict) -> dict:
     """指标层：LadderStats + 题材 + 炸板净流入。返回 reporter 需要的 indicators。"""
     zt = collected["zt"]
     zb = collected["zb"]
+    dt = collected["dt"]
     prev_zt = collected["prev_zt"]
     prev_pools = collected["prev_pools"]
     concept_map = collected["concept_map"]
@@ -192,6 +214,15 @@ def compute(collected: dict) -> dict:
         collected.get("lhb_daily", _empty_df(eastmoney_lhb.LHB_DAILY_COLUMNS)),
         collected.get("lhb_seats", _empty_df(eastmoney_lhb.LHB_SEAT_COLUMNS)),
         zt,
+    )
+    emotion = compute_emotion(
+        zt,
+        zb,
+        dt,
+        collected.get("hist_days", []),
+        zb_ok=collected.get("zb_ok", True),
+        dt_ok=collected.get("dt_ok", True),
+        is_intraday=collected.get("is_intraday", False),
     )
 
     # 涨停池精简（补 concepts / industry），对齐 module.ladder 输入契约
@@ -216,6 +247,7 @@ def compute(collected: dict) -> dict:
         "themes": themes,
         "break": break_res,
         "lhb": lhb_res,
+        "emotion": emotion,
         "zt_pool": zt_pool,
         "timeline_dates": collected["timeline_dates"],
     }

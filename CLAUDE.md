@@ -8,7 +8,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
-`v0.4.0`：**端到端复盘程序已可用**——东财涨跌停池/资金流/概念板块采集（`data/eastmoney_pool.py`）、**龙虎榜榜单/买卖席位采集（`data/eastmoney_lhb.py`）+ 知名游资识别名单（`data/hotmoney_seats.py`，可人工增补）**、指标计算（连板梯队/题材周期/炸板净流入/龙虎榜游资，`analysis/`）、**DeepSeek LLM 自动生成 Markdown 复盘报告**（`llm/`），管道 `pipeline.py` + CLI `review` 子命令。**尚未做**：问答模式（tool.datatools）、情绪温度、个人战法→次日预案（战法待用户提供）。运行环境固定为 `E:/conda_envs/envs/mowan_dm/python.exe`（勿改用其他解释器）。
+`v0.5.0`：**端到端复盘程序已可用**——东财涨跌停池/资金流/概念板块采集（`data/eastmoney_pool.py`）、**龙虎榜榜单/买卖席位采集（`data/eastmoney_lhb.py`）+ 知名游资识别名单（`data/hotmoney_seats.py`，可人工增补）**、指标计算（**情绪温度 `analysis/emotion.py`** / 连板梯队 / 题材周期 / 炸板净流入 / 龙虎榜游资，`analysis/`）、**DeepSeek LLM 自动生成 Markdown 复盘报告**（`llm/`），管道 `pipeline.py` + CLI `review` 子命令。报告为**七章结构**（总览 / 情绪温度 / 连板梯队 / 题材 / 炸板资金 / 龙虎榜游资 / 次日预案）。**尚未做**：问答模式（tool.datatools）、个人战法→次日预案（战法待用户提供）。运行环境固定为 `E:/conda_envs/envs/mowan_dm/python.exe`（勿改用其他解释器）。
 
 **LLM 密钥**：`.env`（不入库，已 gitignore）里 `DEEPSEEK_API_KEY=sk-xxx`；缺 key 时 `review --no-llm` 仍可跑通数据+指标。
 
@@ -16,7 +16,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 ```bash
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review kline --code 600000 --lmt 30
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review realtime --codes 600601,002398,600789
-# 端到端复盘：采集→指标→LLM 报告（涨停数据 15:00 后、龙虎榜 17:30 后完整；--no-llm 跳过 LLM）
+# 端到端复盘：采集→指标→LLM 报告（涨停数据 15:00 后、龙虎榜 17:30 后完整、情绪温度需近5日时序；--no-llm 跳过 LLM）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806 --no-llm
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review            # 缺省探测最近交易日
@@ -34,7 +34,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `docs/战法规范.md` | 战法编写规范 | 新增/修改战法时 |
 | `prompts/INDEX.md` | **Prompt 总索引**（id→文件→角色→依赖→状态） | 改任何 prompt 前必读 |
 | `prompts/glossary/术语表.md` | 超短术语统一语义 | 写 prompt / 判定术语时 |
-| `src/daily_review/` | Python 包（v0.4：采集层 `data/` + 指标层 `analysis/` + LLM 层 `llm/` + 管道 `pipeline.py`） | 实现阶段 |
+| `src/daily_review/` | Python 包（v0.5：采集层 `data/` + 指标层 `analysis/`（含 `emotion.py`）+ LLM 层 `llm/` + 管道 `pipeline.py`） | 实现阶段 |
 
 ## 工作流约定
 
@@ -83,6 +83,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 |---|---|---|
 | `system.analyst` | `prompts/system/复盘分析师.md` | draft |
 | `system.assistant` | `prompts/system/问答助手.md` | draft |
+| `module.emotion` | `prompts/modules/情绪温度.md` | draft |
 | `module.ladder` | `prompts/modules/连板梯队.md` | draft |
 | `module.theme` | `prompts/modules/题材周期与归类.md` | draft |
 | `module.break` | `prompts/modules/炸板净流入.md` | draft |
@@ -100,5 +101,5 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 - 龙虎榜盘后更新：`review` 在**下午 17:30 之后**跑才包含当日龙虎榜章节；盘中/未更新日该章节自动降级为「未更新」说明
 - 运行环境固定为 `E:/conda_envs/envs/mowan_dm`；安装依赖只进该环境或本项目文件夹
 - LLM 角色：**自动报告已实现**（DeepSeek，`llm/`）；**交互问答（tool.datatools）尚未做**
-- 首期模块：连板梯队、题材运行周期与归类、炸板净流入、龙虎榜游资（已实现）
-- 未来：情绪温度、个人战法 → 次日预案（六章结构已预留，战法待用户提供）
+- 首期模块：情绪温度、连板梯队、题材运行周期与归类、炸板净流入、龙虎榜游资（已实现）
+- 未来：个人战法 → 次日预案（七章结构已预留，战法待用户提供）

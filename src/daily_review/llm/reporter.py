@@ -1,10 +1,11 @@
 """复盘报告生成：模块 prompt × 结构化数据 → 章节 → 分析师组装成 Markdown。
 
-流程（对齐 v0.3/v0.4）：
-1. 取 `module.ladder / module.theme / module.break / module.lhb` 四个模块 prompt 正文；
+流程（对齐 v0.5）：
+1. 取 `module.emotion / module.ladder / module.theme / module.break / module.lhb`
+   五个模块 prompt 正文；
 2. 指标数据序列化为紧凑 JSON（字段名严格对齐各 prompt 的「输入数据」契约）；
 3. 每模块一次 LLM 调用生成章节；单模块失败用数据表兜底，不中断整份报告；
-4. `system.analyst` 组装四章节 + 通用次日预案 → 最终 Markdown 落盘 `output/{date}_复盘.md`。
+4. `system.analyst` 组装五章节 + 总览 + 次日预案 → 最终 Markdown 落盘 `output/{date}_复盘.md`。
 """
 
 from __future__ import annotations
@@ -23,12 +24,17 @@ from daily_review.prompts import get_prompt
 
 _WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
-# 模块顺序与文档章节标题（组装阶段使用）
+# 章节标题常量（一处定义多处引用，防止重排后改漏产生重复标题）
+OVERVIEW_SECTION = "一、总览"
+PLAN_SECTION = "七、次日预案"
+
+# 模块顺序与文档章节标题（组装阶段使用；情绪温度是市场级定位，紧跟总览）
 _MODULES = [
-    ("module.ladder", "二、连板梯队"),
-    ("module.theme", "三、题材运行周期与归类"),
-    ("module.break", "四、炸板与资金"),
-    ("module.lhb", "五、龙虎榜与游资"),
+    ("module.emotion", "二、情绪温度"),
+    ("module.ladder", "三、连板梯队"),
+    ("module.theme", "四、题材运行周期与归类"),
+    ("module.break", "五、炸板与资金"),
+    ("module.lhb", "六、龙虎榜与游资"),
 ]
 
 
@@ -116,6 +122,37 @@ def _lhb_payload(ind: dict) -> dict:
         "涨停联动": lhb.get("zt_cross", []),
         "次日关注候选": lhb.get("watch", []),
     }
+
+
+def _emotion_payload(ind: dict) -> dict:
+    """情绪温度载荷（对齐 module.emotion 输入契约）。"""
+    emo = ind.get("emotion") or {}
+    return {
+        "情绪温度(已核算)": {
+            "score": emo.get("score"),
+            "stage": emo.get("stage"),
+            "stage_reason": emo.get("stage_reason"),
+            "score_series": [
+                {"date": s.get("date"), "score": s.get("score")}
+                for s in emo.get("series", [])
+            ],
+            "days_used": emo.get("days_used"),
+        },
+        "成分分(已核算)": emo.get("components", {}),
+        "原始输入": emo.get("raw", {}),
+        "缺失说明": emo.get("notes", []),
+    }
+
+
+def _emotion_forced(ind: dict) -> str:
+    """情绪温度强制一行：程序核算，LLM 必须原样引用（防幻觉数字/阶段词）。"""
+    emo = ind.get("emotion") or {}
+    if not emo.get("available"):
+        return "情绪温度：数据不足（涨停池为空），阶段未知"
+    return (
+        f"情绪温度 {emo.get('score')} 分 / 周期 {emo.get('stage')}。"
+        f"依据：{emo.get('stage_reason')}"
+    )
 
 
 # ---------------------------------------------------------------- 兜底章节（模块调用失败时用数据表顶替）
@@ -248,6 +285,41 @@ def _lhb_fallback(ind: dict) -> str:
     return f"{head}\n\n### 净买排行\n{rank_tbl}\n\n### 知名游资动向\n{hm_tbl}"
 
 
+_EMO_COMP_CN = {
+    "zt": "涨停家数", "height": "空间板高度", "promote": "晋级延续率",
+    "break": "炸板率", "dt": "跌停家数",
+}
+_EMO_RAW_KEY = {
+    "zt": "zt_count", "height": "max_lb", "promote": "promote",
+    "break": "break_rate", "dt": "dt_count",
+}
+
+
+def _emotion_fallback(ind: dict) -> str:
+    """情绪温度兜底：温度/阶段一行 + 成分拆解表（模块调用失败时顶替）。"""
+    emo = ind.get("emotion") or {}
+    if not emo.get("available"):
+        return "（当日涨停池为空，情绪温度不可用）"
+    head = (
+        f"情绪温度 {emo.get('score')} 分 / 周期 {emo.get('stage')}。"
+        f"依据：{emo.get('stage_reason')}"
+    )
+    raw = emo.get("raw", {})
+    rows = []
+    for k, sub in (emo.get("components") or {}).items():
+        rv = raw.get(_EMO_RAW_KEY.get(k, ""))
+        if k in ("promote", "break") and isinstance(rv, (int, float)):
+            rv_txt = f"{rv * 100:.0f}%"
+        elif isinstance(rv, (int, float)) and not isinstance(rv, bool):
+            rv_txt = f"{rv:.0f}"
+        else:
+            rv_txt = str(rv)
+        rows.append({"成分": _EMO_COMP_CN.get(k, k), "今日值": rv_txt, "成分分(0-100)": f"{sub:.0f}"})
+    table = _md_table(rows, ["成分", "今日值", "成分分(0-100)"])
+    notes = "；".join(emo.get("notes", []))
+    return f"{head}\n\n### 成分拆解\n{table}" + (f"\n\n> 备注：{notes}" if notes else "")
+
+
 # ---------------------------------------------------------------- 章节生成
 
 def _module_chapter(
@@ -289,12 +361,14 @@ def _module_chapter(
         body = chat(messages, api_key=api_key)
     except LLMError as exc:
         body = f"（模块 {prompt_id} 生成失败：{exc}。以下为数据表兜底）\n\n{fallback()}"
-    return f"## {title}\n\n{body.strip()}"
+    # LLM 偶把章节标题也回显（尽管要求只输出正文）→ 去重，防组装出重复标题
+    return f"## {title}\n\n{_strip_section_heading(body, title)}"
 
 
 def _headline(ind: dict) -> dict:
     """总览所需核心数据（供分析师写「一、总览」）。"""
     ladder = ind.get("ladder", {})
+    emo = ind.get("emotion") or {}
     return {
         "trade_date": ladder.get("trade_date", ""),
         "zt_count": ladder.get("zt_count", 0),
@@ -304,6 +378,9 @@ def _headline(ind: dict) -> dict:
         "break_rate": ladder.get("break_rate", 0.0),
         "first_board_count": ladder.get("first_board_count", 0),
         "height_series": ladder.get("height_series", []),
+        "emotion_score": emo.get("score"),
+        "emotion_stage": emo.get("stage"),
+        "emotion_reason": emo.get("stage_reason"),
     }
 
 
@@ -355,6 +432,11 @@ def _build_digest(ind: dict) -> dict:
             ],
             "watch": lhb.get("watch", [])[:3],
         },
+        "情绪温度": {
+            "score": (emo := ind.get("emotion") or {}).get("score"),
+            "stage": emo.get("stage"),
+            "stage_reason": emo.get("stage_reason"),
+        },
     }
 
 
@@ -369,11 +451,11 @@ def generate_report(
 ) -> str:
     """生成完整复盘 Markdown 并落盘，返回文本。
 
-    indicators: 管道产出 {ladder, themes, break, zt_pool}（详见 pipeline.compute）。
+    indicators: 管道产出 {ladder, themes, break, lhb, emotion, zt_pool}（详见 pipeline.compute）。
     out_path 缺省：output/{trade_date}_复盘.md（get_settings().output_dir 下）。
 
-    组装策略：三大章（二三四）由模块调用生成后**代码直接拼接**；
-    仅「一、总览」「五、次日预案」两小节走 LLM（喂紧凑摘要，防超 token 截断丢章节）。
+    组装策略：五个模块章节（二~六）由模块调用生成后**代码直接拼接**；
+    仅「一、总览」「七、次日预案」走 LLM（喂紧凑摘要，防超 token 截断丢章节）。
     """
     settings = get_settings()
     if not (api_key or settings.llm_api_key):
@@ -390,6 +472,7 @@ def generate_report(
     # 1. 各模块章节（LLM，失败用数据表兜底）
     chapters: list[str] = []
     builders = {
+        "module.emotion": (_emotion_payload, _emotion_fallback),
         "module.ladder": (_ladder_payload, _ladder_fallback),
         "module.theme": (_theme_payload, _theme_fallback),
         "module.break": (_break_payload, _break_fallback),
@@ -408,9 +491,26 @@ def generate_report(
                     "梯队表格直接采用已核算分组，禁止自行重算家数。"
                 ),
             }
+        elif prompt_id == "module.emotion":
+            # 温度分/阶段/依据句由程序核算：注入后 LLM 必须原样引用，禁止重算
+            kw = {
+                "forced": _emotion_forced(indicators),
+                "extra_rule": (
+                    "「情绪温度(已核算)」与「成分分(已核算)」是程序核算结果，必须原样引用（含全部数字与阶段词）；"
+                    "禁止重算温度分、改写阶段词或另造依据句；原始输入仅用于组织证据句；数据缺失标注「缺数据」。"
+                    "情绪周期（冰点期/修复期/高潮期/退潮期，带「期」）是市场级阶段，题材运行阶段（启动/发酵/高潮/退潮，裸词）是题材级，本章只用带「期」的市场级阶段词。"
+                ),
+            }
         chapters.append(_module_chapter(prompt_id, title_cn, payload_fn(indicators), api_key, fallback_fn, **kw))
 
-    # 2. 总览（LLM，喂核心数据）
+    # 2. 总览（LLM，喂核心数据 + 情绪温度强制引用）
+    emo = indicators.get("emotion") or {}
+    emotion_forced = ""
+    if emo.get("available"):
+        emotion_forced = (
+            f"\n\n【程序核算结果，总览情绪定性必须原样采用，不得另写阶段词】\n"
+            f"情绪温度 {emo.get('score')} 分 / 周期 {emo.get('stage')}。依据：{emo.get('stage_reason')}"
+        )
     overview = f"核心数据：{_compact_json(_headline(indicators))}\n\n（总览生成失败，详见下方章节）"
     messages = [
         {"role": "system", "content": (analyst.body if analyst else "你是 A 股超短连板复盘分析师。")},
@@ -419,7 +519,10 @@ def generate_report(
             "content": (
                 f"复盘日期：{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}（{_weekday_cn(trade_date)}）\n"
                 f"核心数据：{_compact_json(_headline(indicators))}\n\n"
-                f"请输出「## 一、总览」的正文：1 段情绪定性（用「修复/高潮/退潮」等定位，结合空间板高度与炸板率）+ 核心数据一行。"
+                f"请输出「## {OVERVIEW_SECTION}」的正文：1 段情绪定性——必须原样引用程序核算的情绪温度"
+                f"（分数/阶段，见 emotion_score/emotion_stage/emotion_reason），不得另写阶段词；"
+                f"再结合空间板高度与炸板率补充一句话；最后给核心数据一行。"
+                f"{emotion_forced}"
                 f"只输出正文，不要标题、不要编造数字。"
             ),
         },
@@ -429,7 +532,13 @@ def generate_report(
     except LLMError as exc:
         overview = f"核心数据：{_compact_json(_headline(indicators))}\n\n（总览生成失败：{exc}）"
 
-    # 3. 次日预案（LLM，喂紧凑摘要）
+    # 3. 次日预案（LLM，喂紧凑摘要 + 情绪温度基调）
+    emo_hint = ""
+    if emo.get("available"):
+        emo_hint = (
+            f"\n情绪温度：{emo.get('score')} 分 / {emo.get('stage')}"
+            f"（程序核算，预案情绪基调必须与其一致，不得另写阶段词）"
+        )
     plan_body = f"（预案生成失败。{plan_rule}）"
     messages = [
         {
@@ -444,8 +553,9 @@ def generate_report(
             "content": (
                 f"复盘日期：{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}（{_weekday_cn(trade_date)}）\n"
                 f"当日结构化摘要（JSON）：\n```json\n{_compact_json(_build_digest(indicators))}\n```\n\n"
-                f"请输出「## 六、次日预案」的正文：1 段次日核心观点 + 1–3 个关注方向（题材+具体对象+观察信号）"
+                f"请输出「## {PLAN_SECTION}」的正文：1 段次日核心观点 + 1–3 个关注方向（题材+具体对象+观察信号）"
                 f"+ 风险警示。全部用「若…则…」条件句式；未指定战法，只给方向与风险，不给具体买卖点。"
+                f"{emo_hint}"
                 f"只输出正文，不要标题、不要编造数字。"
             ),
         },
@@ -456,13 +566,13 @@ def generate_report(
         plan_body = f"（预案生成失败：{exc}。{plan_rule}）"
 
     # 4. 组装（章节由代码拼接，保证齐全不丢）
-    overview = _strip_section_heading(overview, "一、总览")
-    plan_body = _strip_section_heading(plan_body, "六、次日预案")
+    overview = _strip_section_heading(overview, OVERVIEW_SECTION)
+    plan_body = _strip_section_heading(plan_body, PLAN_SECTION)
     final = "\n\n".join([
         title,
-        f"## 一、总览\n\n{overview}",
+        f"## {OVERVIEW_SECTION}\n\n{overview}",
         *chapters,
-        f"## 六、次日预案\n\n{plan_body}",
+        f"## {PLAN_SECTION}\n\n{plan_body}",
     ])
 
     # 5. 落盘
