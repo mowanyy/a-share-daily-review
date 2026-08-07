@@ -8,12 +8,18 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
-`v0.2.0`：需求分析 + Prompt 骨架已完成；**数据采集层起步**——新浪实时行情与东财日 K 线已实现并可实测（`src/daily_review/data/`）；**git 已初始化**（main 分支）。**尚无**涨停池/炸板池爬虫、指标计算、LLM 调用、报告生成。运行环境固定为 `E:/conda_envs/envs/mowan_dm/python.exe`（勿改用其他解释器）。
+`v0.3.0`：**端到端复盘程序已可用**——东财涨跌停池/资金流/概念板块采集（`data/eastmoney_pool.py`）、指标计算（连板梯队/题材周期/炸板净流入，`analysis/`）、**DeepSeek LLM 自动生成 Markdown 复盘报告**（`llm/`），管道 `pipeline.py` + CLI `review` 子命令。**尚未做**：问答模式（tool.datatools）、情绪温度、个人战法→次日预案（战法待用户提供）。运行环境固定为 `E:/conda_envs/envs/mowan_dm/python.exe`（勿改用其他解释器）。
+
+**LLM 密钥**：`.env`（不入库，已 gitignore）里 `DEEPSEEK_API_KEY=sk-xxx`；缺 key 时 `review --no-llm` 仍可跑通数据+指标。
 
 已可用命令（在项目根目录，`PYTHONPATH=src`）：
 ```bash
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review kline --code 600000 --lmt 30
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review realtime --codes 600601,002398,600789
+# 端到端复盘：采集→指标→LLM 报告（收盘 15:00 后数据完整；--no-llm 跳过 LLM）
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806 --no-llm
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review            # 缺省探测最近交易日
 ```
 
 ## 目录地图
@@ -28,7 +34,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `docs/战法规范.md` | 战法编写规范 | 新增/修改战法时 |
 | `prompts/INDEX.md` | **Prompt 总索引**（id→文件→角色→依赖→状态） | 改任何 prompt 前必读 |
 | `prompts/glossary/术语表.md` | 超短术语统一语义 | 写 prompt / 判定术语时 |
-| `src/daily_review/` | Python 包（数据采集层 v0.2 已实现） | 实现阶段 |
+| `src/daily_review/` | Python 包（v0.3：采集层 `data/` + 指标层 `analysis/` + LLM 层 `llm/` + 管道 `pipeline.py`） | 实现阶段 |
 
 ## 工作流约定
 
@@ -89,8 +95,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 边界（不做 / 尚未做）
 
-- 数据源定为**东方财富接口爬取**（非 akshare / tushare）。v0.2 已实现东财 K 线 + 新浪实时行情；**涨停池/炸板池/资金流/题材接口待实现**，详见 `docs/东财接口清单.md` 的状态列
+- 数据源定为**东方财富接口爬取**（非 akshare / tushare）。v0.3 已实现涨跌停池/资金流/概念板块（`data/eastmoney_pool.py`）；**连板池（LB）、分时数据待实现**，详见 `docs/东财接口清单.md` 的状态列
 - 运行环境固定为 `E:/conda_envs/envs/mowan_dm`；安装依赖只进该环境或本项目文件夹
-- LLM 角色：**自动报告 + 交互问答** 都要；**输出 Markdown 文档**
-- 首期模块：连板梯队、题材运行周期与归类、炸板净流入（用户已拍板）
-- 未来：情绪温度、个人战法 → 次日预案（结构已预留，内容待用户提供战法）
+- LLM 角色：**自动报告已实现**（DeepSeek，`llm/`）；**交互问答（tool.datatools）尚未做**
+- 首期模块：连板梯队、题材运行周期与归类、炸板净流入（已实现）
+- 未来：情绪温度、个人战法 → 次日预案（五章结构已预留，战法待用户提供）

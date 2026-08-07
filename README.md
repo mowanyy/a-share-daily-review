@@ -2,7 +2,7 @@
 
 > 基于 Python 的 A 股收盘后复盘工具，聚焦**超短连板**风格：连板梯队、题材运行周期、炸板资金，并为「个人战法 → AI 次日预案」预留扩展位。
 
-**当前阶段**：`v0.2 · 数据采集层起步`（新浪实时行情 + 东财 K 线已可用；涨停池/炸板池/指标/LLM 后续迭代）
+**当前阶段**：`v0.3 · 端到端复盘已可用`（东财池子/资金流采集 → 连板梯队/题材/炸板指标 → DeepSeek LLM 生成 Markdown 复盘报告；问答模式与个人战法下期）
 
 ---
 
@@ -42,10 +42,15 @@
 │   ├── examples/       #   Few-shot 示例
 │   ├── glossary/       #   术语表
 │   └── tools/          #   问答模式工具定义
-├── src/daily_review/   # Python 包（数据/指标/LLM/报告 未来挂载点）
-├── data/               # 数据缓存（不入库）
-├── output/             # 每日复盘输出（不入库）
-├── tests/              # 测试
+├── src/daily_review/   # Python 包
+│   ├── data/           #   采集层：eastmoney_pool（池子/资金流/板块）eastmoney sina repo http_client
+│   ├── analysis/       #   指标层：ladder（连板梯队）theme（题材周期）break_flow（炸板资金）
+│   ├── llm/            #   LLM 层：client（DeepSeek）reporter（模块 prompt 组装报告）
+│   ├── pipeline.py     #   管道：采集 → 指标 → 报告
+│   └── cli.py          #   CLI：kline / realtime / review
+├── data/               # 数据缓存 data/{YYYYMMDD}/*.csv（不入库）
+├── output/             # 复盘报告 output/{YYYYMMDD}_复盘.md（不入库）
+├── tests/              # 测试（离线：池子解析 / 指标 / prompt 一致性 / 载荷对齐）
 ├── requirements.txt    # 运行时依赖（锁定版本）
 ├── requirements-dev.txt# 开发依赖
 └── pyproject.toml
@@ -65,13 +70,16 @@ PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review kline --
 
 # 新浪实时行情（多个代码逗号分隔）
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review realtime --codes 600601,002398,600789
+
+# ★ 端到端复盘：采集 → 指标 → DeepSeek LLM 生成 output/YYYYMMDD_复盘.md
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806
+# 只跑数据+指标（无 key / 调试用）
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806 --no-llm
+# 缺省探测最近交易日（收盘 15:00 后数据完整）
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review
 ```
 
-数据自动落盘到 `data/{YYYYMMDD}/`。示例：
-```bash
-# 未来（示意）：
-python -m daily_review --date 2026-08-06   # 一键生成当日复盘 Markdown
-```
+> **LLM 密钥**：首次使用前在项目根目录 `.env` 写入 `DEEPSEEK_API_KEY=sk-xxx`（`.env` 已被 gitignore，不入库）。数据自动落盘到 `data/{YYYYMMDD}/`，报告输出到 `output/{YYYYMMDD}_复盘.md`。
 
 ---
 

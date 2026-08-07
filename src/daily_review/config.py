@@ -1,7 +1,7 @@
-"""全局配置加载（占位）。
+"""全局配置加载。
 
-v0.1 阶段暂无实际配置项；后续将承载：东财请求频率、缓存目录、
-LLM API 密钥/模型、炸板信号阈值等。配置来源优先环境变量，其次本地文件。
+配置来源优先环境变量，其次项目根目录的 `.env`（不入库）。承载：
+东财请求频率/重试、缓存目录、LLM API 密钥/模型/地址等。
 """
 
 from __future__ import annotations
@@ -13,10 +13,26 @@ from pathlib import Path
 # 项目根目录（本文件位于 src/daily_review/config.py，向上三级为仓库根）
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+_ENV_FILE = PROJECT_ROOT / ".env"
+
+
+def _load_dotenv() -> None:
+    """极简 .env 读取：仅填充环境变量中尚未设置的 KEY（不覆盖已存在的）。"""
+    if not _ENV_FILE.exists():
+        return
+    for line in _ENV_FILE.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key, value = key.strip(), value.strip().strip("\"'")
+        if key and not os.getenv(key):
+            os.environ[key] = value
+
 
 @dataclass
 class Settings:
-    """应用配置。字段在后续迭代中按需扩充。"""
+    """应用配置。"""
 
     # 路径
     project_root: Path = PROJECT_ROOT
@@ -29,15 +45,19 @@ class Settings:
     max_retries: int = 3               # 失败重试次数
     cache_enabled: bool = True
 
-    # LLM（v0.4 启用）
-    llm_api_key: str = field(default_factory=lambda: os.getenv("LLM_API_KEY", ""))
-    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", ""))
+    # LLM（v0.3 启用，DeepSeek，OpenAI 兼容协议）
+    llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "https://api.deepseek.com"))
+    llm_api_key: str = field(
+        default_factory=lambda: os.getenv("DEEPSEEK_API_KEY") or os.getenv("LLM_API_KEY", "")
+    )
+    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "deepseek-chat"))
 
 
 def get_settings() -> Settings:
     """返回单例配置。"""
     global _settings
     if _settings is None:
+        _load_dotenv()
         _settings = Settings()
     return _settings
 
