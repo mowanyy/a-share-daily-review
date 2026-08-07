@@ -1,8 +1,8 @@
 # 每日复盘 · 超短连板复盘系统
 
-> 基于 Python 的 A 股收盘后复盘工具，聚焦**超短连板**风格：连板梯队、题材运行周期、炸板资金，并为「个人战法 → AI 次日预案」预留扩展位。
+> 基于 Python 的 A 股收盘后复盘工具，聚焦**超短连板**风格：连板梯队、题材运行周期、炸板资金、龙虎榜游资，并为「个人战法 → AI 次日预案」预留扩展位。
 
-**当前阶段**：`v0.3 · 端到端复盘已可用`（东财池子/资金流采集 → 连板梯队/题材/炸板指标 → DeepSeek LLM 生成 Markdown 复盘报告；问答模式与个人战法下期）
+**当前阶段**：`v0.4 · 端到端复盘已可用`（东财池子/资金流/龙虎榜采集 → 连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；问答模式与个人战法下期）
 
 ---
 
@@ -43,8 +43,8 @@
 │   ├── glossary/       #   术语表
 │   └── tools/          #   问答模式工具定义
 ├── src/daily_review/   # Python 包
-│   ├── data/           #   采集层：eastmoney_pool（池子/资金流/板块）eastmoney sina repo http_client
-│   ├── analysis/       #   指标层：ladder（连板梯队）theme（题材周期）break_flow（炸板资金）
+│   ├── data/           #   采集层：eastmoney_pool（池子/资金流/板块）eastmoney_lhb（龙虎榜）hotmoney_seats（游资名单）eastmoney sina repo http_client
+│   ├── analysis/       #   指标层：ladder（连板梯队）theme（题材周期）break_flow（炸板资金）lhb（游资分析）
 │   ├── llm/            #   LLM 层：client（DeepSeek）reporter（模块 prompt 组装报告）
 │   ├── pipeline.py     #   管道：采集 → 指标 → 报告
 │   └── cli.py          #   CLI：kline / realtime / review
@@ -75,7 +75,7 @@ PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review realtime
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806
 # 只跑数据+指标（无 key / 调试用）
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806 --no-llm
-# 缺省探测最近交易日（收盘 15:00 后数据完整）
+# 缺省探测最近交易日（涨停数据收盘 15:00 后、龙虎榜 17:30 后完整）
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review
 ```
 

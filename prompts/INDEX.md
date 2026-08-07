@@ -21,6 +21,7 @@
 | `module.ladder` | [modules/连板梯队.md](modules/连板梯队.md) | report | 涨停池、连板统计 | 梯队章节 | draft |
 | `module.theme` | [modules/题材周期与归类.md](modules/题材周期与归类.md) | report | 题材+成分+多日时序 | 题材归类章节 | draft |
 | `module.break` | [modules/炸板净流入.md](modules/炸板净流入.md) | report | 炸板池、资金流 | 炸板资金章节 | draft |
+| `module.lhb` | [modules/龙虎榜游资.md](modules/龙虎榜游资.md) | report | 龙虎榜榜单、买卖席位、涨停池 | 龙虎榜游资章节 | draft |
 | `module.plan` | [modules/次日预案.md](modules/次日预案.md) | report | 当日复盘 + 战法 | 次日预案章节 | draft |
 | `strategy.template` | [strategies/战法模板.md](strategies/战法模板.md) | strategy | —（模板） | 战法文件结构 | draft |
 | `strategy.example` | [strategies/示例-连板接力.md](strategies/示例-连板接力.md) | strategy | —（示例） | 示范战法 | draft |
@@ -37,6 +38,7 @@
     ├─ module.ladder → 连板梯队章节
     ├─ module.theme  → 题材归类章节
     ├─ module.break  → 炸板资金章节
+    ├─ module.lhb    → 龙虎榜游资章节
     └─ module.plan   → 次日预案章节（引用 strategy.* 战法）
 
 问答模式（交互对话）

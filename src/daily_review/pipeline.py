@@ -1,7 +1,7 @@
-"""端到端复盘管道：采集 → 指标 → LLM 报告（v0.3）。
+"""端到端复盘管道：采集 → 指标 → LLM 报告（v0.3/v0.4）。
 
-collect(trade_date)  采集池子/时间线/资金流/行业映射，落盘 data/{date}/*.csv（有缓存则复用）
-compute(collected)   指标层：连板梯队 + 题材归类 + 炸板净流入
+collect(trade_date)  采集池子/时间线/资金流/行业映射/龙虎榜，落盘 data/{date}/*.csv（有缓存则复用）
+compute(collected)   指标层：连板梯队 + 题材归类 + 炸板净流入 + 龙虎榜游资
 generate_report()    见 llm.reporter（CLI 无 --no-llm 时调用）
 """
 
@@ -12,9 +12,9 @@ from typing import Callable
 
 import pandas as pd
 
-from daily_review.analysis import analyze_break, build_themes, compute_ladder
+from daily_review.analysis import analyze_break, analyze_lhb, build_themes, compute_ladder
 from daily_review.config import get_settings
-from daily_review.data import eastmoney_pool as em
+from daily_review.data import eastmoney_lhb, eastmoney_pool as em
 from daily_review.data.repo import load_csv, save_csv
 
 # 时间线长度（近 N 个交易日：今日 + N-1 天历史，供晋级率/题材时序/高度序列）
@@ -27,14 +27,36 @@ def _empty_df(columns: list[str]) -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
+def _zfill_codes(df: pd.DataFrame) -> pd.DataFrame:
+    """把 `code` 列统一零填充为 6 位字符串（防 CSV 往返丢前导零）。
+
+    CSV 读回后 code 可能是 int/float（002428 → 2428.0，pandas 3.0 甚至把
+    "000001" 解析为 1.0）：数值型先去尾 ".0" 再转字符串，最后 zfill(6)。
+    """
+    if "code" not in df.columns:
+        return df
+    df = df.copy()
+    s = df["code"]
+    if s.dtype.kind in "iuf":  # int/uint/float 数值型
+        s = s.fillna("").astype(str).str.replace(r"\.0$", "", regex=True)
+    else:
+        s = s.astype(str)
+    df["code"] = s.mask(s.str.len() > 0, s.str.zfill(6))
+    return df
+
+
 def _cached(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame]) -> pd.DataFrame:
-    """CSV 缓存优先；空结果不缓存（下次重取）。"""
+    """CSV 缓存优先；空结果不缓存（下次重取）。
+
+    读缓存时对 `code` 列做零填充——CSV 往返会把前导零（如 002428 → 2428）丢失，
+    导致与 API 直取（字符串 code）的跨模块匹配（炸板资金流 / 龙虎榜联动）失败。
+    """
     settings = get_settings()
     if settings.cache_enabled:
         try:
             df = load_csv(name, trade_date)
             if not df.empty:
-                return df
+                return _zfill_codes(df)
         except Exception:
             pass
     df = fetch_fn()
@@ -127,6 +149,17 @@ def collect(trade_date: str) -> dict:
             save_csv(moneyflow, "moneyflow_zb", trade_date)
     print(f"  资金流 {len(moneyflow)} 条")
 
+    # 6. 龙虎榜（盘后约 17:30 更新；盘中/未更新日为空表，优雅降级不报错）
+    try:
+        lhb_daily = _cached("lhb_daily", trade_date, lambda: eastmoney_lhb.fetch_lhb_daily(trade_date))
+    except Exception:
+        lhb_daily = _empty_df(eastmoney_lhb.LHB_DAILY_COLUMNS)
+    try:
+        lhb_seats = _cached("lhb_seats", trade_date, lambda: eastmoney_lhb.fetch_lhb_seats(trade_date))
+    except Exception:
+        lhb_seats = _empty_df(eastmoney_lhb.LHB_SEAT_COLUMNS)
+    print(f"  龙虎榜 {len(lhb_daily)} 条 / 席位 {len(lhb_seats)} 条")
+
     return {
         "trade_date": trade_date,
         "zt": zt,
@@ -137,6 +170,8 @@ def collect(trade_date: str) -> dict:
         "height_series": height_series,
         "concept_map": concept_map,
         "moneyflow": moneyflow,
+        "lhb_daily": lhb_daily,
+        "lhb_seats": lhb_seats,
         "timeline_dates": dates,
     }
 
@@ -153,6 +188,11 @@ def compute(collected: dict) -> dict:
     ladder = compute_ladder(zt, zb, prev_zt, collected["height_series"])
     themes = build_themes(zt, prev_pools, concept_map)
     break_res = analyze_break(zb, moneyflow, break_rate=ladder["break_rate"])
+    lhb_res = analyze_lhb(
+        collected.get("lhb_daily", _empty_df(eastmoney_lhb.LHB_DAILY_COLUMNS)),
+        collected.get("lhb_seats", _empty_df(eastmoney_lhb.LHB_SEAT_COLUMNS)),
+        zt,
+    )
 
     # 涨停池精简（补 concepts / industry），对齐 module.ladder 输入契约
     concepts = collected["concept_map"]
@@ -175,6 +215,7 @@ def compute(collected: dict) -> dict:
         "ladder": ladder,
         "themes": themes,
         "break": break_res,
+        "lhb": lhb_res,
         "zt_pool": zt_pool,
         "timeline_dates": collected["timeline_dates"],
     }

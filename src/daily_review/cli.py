@@ -21,6 +21,18 @@ def _print(df) -> None:
     print(df.to_string(index=False))
 
 
+def _fmt_amount(v) -> str:
+    """金额 → 亿/万 文本（GBK 安全）。"""
+    if v is None:
+        return "缺"
+    v = float(v)
+    if abs(v) >= 1e8:
+        return f"{v / 1e8:+.2f}亿"
+    if abs(v) >= 1e4:
+        return f"{v / 1e4:+.0f}万"
+    return f"{v:+.0f}"
+
+
 def _cmd_kline(args) -> None:
     df = eastmoney.fetch_kline(args.code, klt=args.klt, fqt=args.fqt, lmt=args.lmt)
     _print(df)
@@ -57,6 +69,24 @@ def _print_summary(ind: dict) -> None:
         )
     print(f"炸板资金流表 {len(ind['break'].get('table', []))} 行")
 
+    lhb = ind.get("lhb") or {}
+    ov = lhb.get("overview") or {}
+    if ov.get("stock_count"):
+        print(
+            f"龙虎榜 {ov['stock_count']} 家 / 净买额 {_fmt_amount(ov.get('total_net_amt'))} / "
+            f"机构上榜 {ov.get('inst_stock_count', 0)} 家"
+        )
+        for h in lhb.get("hotmoney", [])[:5]:
+            tops = "、".join(
+                f"{s.get('code')} {s.get('stock_name')}" for s in (h.get("stocks") or [])[:2]
+            )
+            print(
+                f"  - {h.get('tag', '')}({h.get('style_cn', '')}) "
+                f"净买{_fmt_amount(h.get('net_amt'))} 标的: {tops}"
+            )
+    else:
+        print("龙虎榜 未更新或为空（需盘后 17:30 之后）")
+
 
 def _cmd_review(args) -> None:
     from daily_review.llm.client import LLMError
@@ -88,7 +118,7 @@ def _cmd_review(args) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="daily-review", description="每日复盘 · 数据采集 + 端到端复盘 CLI（v0.3）"
+        prog="daily-review", description="每日复盘 · 数据采集 + 端到端复盘 CLI（v0.4）"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -107,7 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_rev = sub.add_parser(
         "review",
-        help="端到端复盘：采集→指标→LLM 报告（收盘 15:00 后数据才完整）",
+        help="端到端复盘：采集→指标→LLM 报告（涨停数据收盘 15:00 后、龙虎榜 17:30 后完整）",
     )
     p_rev.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
     p_rev.add_argument(

@@ -1,10 +1,10 @@
 """复盘报告生成：模块 prompt × 结构化数据 → 章节 → 分析师组装成 Markdown。
 
-流程（对齐 plan v0.3）：
-1. 取 `module.ladder / module.theme / module.break` 三个模块 prompt 正文；
+流程（对齐 v0.3/v0.4）：
+1. 取 `module.ladder / module.theme / module.break / module.lhb` 四个模块 prompt 正文；
 2. 指标数据序列化为紧凑 JSON（字段名严格对齐各 prompt 的「输入数据」契约）；
 3. 每模块一次 LLM 调用生成章节；单模块失败用数据表兜底，不中断整份报告；
-4. `system.analyst` 组装三章节 + 通用次日预案 → 最终 Markdown 落盘 `output/{date}_复盘.md`。
+4. `system.analyst` 组装四章节 + 通用次日预案 → 最终 Markdown 落盘 `output/{date}_复盘.md`。
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ _MODULES = [
     ("module.ladder", "二、连板梯队"),
     ("module.theme", "三、题材运行周期与归类"),
     ("module.break", "四、炸板与资金"),
+    ("module.lhb", "五、龙虎榜与游资"),
 ]
 
 
@@ -101,6 +102,19 @@ def _break_payload(ind: dict) -> dict:
     return {
         "炸板概览": {"break_count": brk.get("break_count"), "break_rate": brk.get("break_rate")},
         "炸板股资金流向": brk.get("table", []),
+    }
+
+
+def _lhb_payload(ind: dict) -> dict:
+    """龙虎榜载荷（对齐 module.lhb 输入契约）。未采集/为空时返回空结构。"""
+    lhb = ind.get("lhb") or {}
+    return {
+        "龙虎榜概览": lhb.get("overview"),
+        "个股净买排行": lhb.get("net_rank", []),
+        "知名游资动向": lhb.get("hotmoney", []),
+        "活跃席位": lhb.get("active_seats", []),
+        "涨停联动": lhb.get("zt_cross", []),
+        "次日关注候选": lhb.get("watch", []),
     }
 
 
@@ -194,6 +208,44 @@ def _break_fallback(ind: dict) -> str:
         for r in brk["table"]
     ]
     return _md_table(rows, ["代码 名称", "题材", "炸板次数", "收盘涨幅", "主力净流入", "信号"])
+
+
+def _lhb_fallback(ind: dict) -> str:
+    """龙虎榜兜底：概览 + 净买排行 + 知名游资数据表（模块调用失败时顶替）。"""
+    lhb = ind.get("lhb") or {}
+    ov = lhb.get("overview") or {}
+    if not ov.get("stock_count"):
+        return "（当日龙虎榜未更新或数据为空——复盘时间需在盘后 17:30 之后）"
+    head = (
+        f"上榜 {ov.get('stock_count', 0)} 家 / 净买额 {_fmt_money(ov.get('total_net_amt'))} / "
+        f"机构上榜 {ov.get('inst_stock_count', 0)} 家"
+    )
+
+    rank = [
+        {
+            "代码 名称": f"{r['code']} {r['name']}",
+            "涨幅": "" if r.get("change_rate") is None else f"{r['change_rate']:+.2f}%",
+            "净买额": _fmt_money(r.get("net_amt")),
+            "上榜原因": "；".join(r.get("reasons", []))[:40],
+            "涨停/连板": f"{r.get('lb_num')}板" if r.get("is_zt") else "否",
+        }
+        for r in lhb.get("net_rank", [])[:10]
+    ]
+    rank_tbl = _md_table(rank, ["代码 名称", "涨幅", "净买额", "上榜原因", "涨停/连板"])
+
+    hm = [
+        {
+            "游资": f"{h.get('tag', '')}（{h.get('style_cn', '')}）",
+            "净买总额": _fmt_money(h.get("net_amt")),
+            "标的": "、".join(
+                f"{s.get('code')} {s.get('stock_name')}（{_fmt_money(s.get('net_amt'))}）"
+                for s in (h.get("stocks") or [])[:3]
+            ),
+        }
+        for h in lhb.get("hotmoney", [])[:8]
+    ]
+    hm_tbl = _md_table(hm, ["游资", "净买总额", "标的"]) if hm else "（当日无知名游资上榜）"
+    return f"{head}\n\n### 净买排行\n{rank_tbl}\n\n### 知名游资动向\n{hm_tbl}"
 
 
 # ---------------------------------------------------------------- 章节生成
@@ -292,6 +344,17 @@ def _build_digest(ind: dict) -> dict:
             "break_rate": brk.get("break_rate", 0.0),
             "watch": brk.get("watch", [])[:3],
         },
+        "龙虎榜": {
+            "stock_count": (lhb := ind.get("lhb") or {}).get("overview", {}).get("stock_count", 0),
+            "total_net_amt": lhb.get("overview", {}).get("total_net_amt"),
+            "hotmoney": [
+                {"tag": h.get("tag", ""), "style_cn": h.get("style_cn", ""),
+                 "net_amt": h.get("net_amt", 0),
+                 "stocks": [f"{s.get('code')} {s.get('stock_name')}" for s in h.get("stocks", [])[:2]]}
+                for h in lhb.get("hotmoney", [])[:5]
+            ],
+            "watch": lhb.get("watch", [])[:3],
+        },
     }
 
 
@@ -324,12 +387,13 @@ def generate_report(
     plan_rule = "未指定战法 → 通用预案：仅给方向与风险，不给具体买卖点。" if plan else ""
     title = f"# 📊 {trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]} 复盘（{_weekday_cn(trade_date)}）"
 
-    # 1. 三模块章节（LLM，失败用数据表兜底）
+    # 1. 各模块章节（LLM，失败用数据表兜底）
     chapters: list[str] = []
     builders = {
         "module.ladder": (_ladder_payload, _ladder_fallback),
         "module.theme": (_theme_payload, _theme_fallback),
         "module.break": (_break_payload, _break_fallback),
+        "module.lhb": (_lhb_payload, _lhb_fallback),
     }
     for prompt_id, title_cn in _MODULES:
         payload_fn, fallback_fn = builders[prompt_id]
@@ -380,7 +444,7 @@ def generate_report(
             "content": (
                 f"复盘日期：{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}（{_weekday_cn(trade_date)}）\n"
                 f"当日结构化摘要（JSON）：\n```json\n{_compact_json(_build_digest(indicators))}\n```\n\n"
-                f"请输出「## 五、次日预案」的正文：1 段次日核心观点 + 1–3 个关注方向（题材+具体对象+观察信号）"
+                f"请输出「## 六、次日预案」的正文：1 段次日核心观点 + 1–3 个关注方向（题材+具体对象+观察信号）"
                 f"+ 风险警示。全部用「若…则…」条件句式；未指定战法，只给方向与风险，不给具体买卖点。"
                 f"只输出正文，不要标题、不要编造数字。"
             ),
@@ -393,12 +457,12 @@ def generate_report(
 
     # 4. 组装（章节由代码拼接，保证齐全不丢）
     overview = _strip_section_heading(overview, "一、总览")
-    plan_body = _strip_section_heading(plan_body, "五、次日预案")
+    plan_body = _strip_section_heading(plan_body, "六、次日预案")
     final = "\n\n".join([
         title,
         f"## 一、总览\n\n{overview}",
         *chapters,
-        f"## 五、次日预案\n\n{plan_body}",
+        f"## 六、次日预案\n\n{plan_body}",
     ])
 
     # 5. 落盘

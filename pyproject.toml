@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "daily-review"
-version = "0.3.0"
-description = "A股超短连板收盘复盘系统：连板梯队 / 题材周期 / 炸板资金 / AI复盘与次日预案"
+version = "0.4.0"
+description = "A股超短连板收盘复盘系统：连板梯队 / 题材周期 / 炸板资金 / 龙虎榜游资 / AI复盘与次日预案"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
