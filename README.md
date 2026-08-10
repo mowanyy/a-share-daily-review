@@ -2,7 +2,7 @@
 
 > 基于 Python 的 A 股收盘后复盘工具，聚焦**超短连板**风格：情绪温度、连板梯队、题材运行周期、炸板资金、龙虎榜游资，并为「个人战法 → AI 次日预案」预留扩展位。
 
-**当前阶段**：`v0.5 · 端到端复盘已可用`（东财池子/资金流/龙虎榜采集 → 情绪温度/连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；问答模式与个人战法下期）
+**当前阶段**：`v0.6 · 端到端复盘 + 数据看板已可用`（东财池子/资金流/龙虎榜采集 → 情绪温度/连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；另可生成近 10 个交易日趋势数据看板单文件 HTML；问答模式与个人战法下期）
 
 ---
 
@@ -37,7 +37,7 @@
 ├── prompts/            # ★ Prompt 工程核心
 │   ├── INDEX.md        #   Prompt 总索引
 │   ├── system/         #   角色级 prompt（复盘分析师 / 问答助手）
-│   ├── modules/        #   分析模块 prompt（情绪温度/连板梯队/题材/炸板/龙虎榜/次日预案）
+│   ├── modules/        #   分析模块 prompt（情绪温度/数据看板/连板梯队/题材/炸板/龙虎榜/次日预案）
 │   ├── strategies/     #   战法库（可插拔）
 │   ├── examples/       #   Few-shot 示例
 │   ├── glossary/       #   术语表
@@ -46,10 +46,11 @@
 │   ├── data/           #   采集层：eastmoney_pool（池子/资金流/板块）eastmoney_lhb（龙虎榜）hotmoney_seats（游资名单）eastmoney sina repo http_client
 │   ├── analysis/       #   指标层：emotion（情绪温度）ladder（连板梯队）theme（题材周期）break_flow（炸板资金）lhb（游资分析）
 │   ├── llm/            #   LLM 层：client（DeepSeek）reporter（模块 prompt 组装报告）
+│   ├── dashboard.py    #   数据看板：近 N 日趋势图表（单文件 HTML）+ LLM 多日解读
 │   ├── pipeline.py     #   管道：采集 → 指标 → 报告
-│   └── cli.py          #   CLI：kline / realtime / review
+│   └── cli.py          #   CLI：kline / realtime / review / dashboard
 ├── data/               # 数据缓存 data/{YYYYMMDD}/*.csv（不入库）
-├── output/             # 复盘报告 output/{YYYYMMDD}_复盘.md（不入库）
+├── output/             # 复盘报告 output/{YYYYMMDD}_复盘.md、数据看板 output/{YYYYMMDD}_看板.html（不入库）
 ├── tests/              # 测试（离线：池子解析 / 指标 / prompt 一致性 / 载荷对齐）
 ├── requirements.txt    # 运行时依赖（锁定版本）
 ├── requirements-dev.txt# 开发依赖
@@ -77,9 +78,14 @@ PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review -
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806 --no-llm
 # 缺省探测最近交易日（涨停数据收盘 15:00 后、龙虎榜 17:30 后完整）
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review
+
+# ★ 数据看板：近 10 个交易日趋势（自包含单文件 HTML，纯 JS + 内联 SVG，浏览器直接打开）
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806 --no-llm
+# 缺省探测最近交易日 + 用系统浏览器打开 + 附 LLM 多日趋势解读
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --open
 ```
 
-> **LLM 密钥**：首次使用前在项目根目录 `.env` 写入 `DEEPSEEK_API_KEY=sk-xxx`（`.env` 已被 gitignore，不入库）。数据自动落盘到 `data/{YYYYMMDD}/`，报告输出到 `output/{YYYYMMDD}_复盘.md`。
+> **LLM 密钥**：首次使用前在项目根目录 `.env` 写入 `DEEPSEEK_API_KEY=sk-xxx`（`.env` 已被 gitignore，不入库）。数据自动落盘到 `data/{YYYYMMDD}/`，报告输出到 `output/{YYYYMMDD}_复盘.md`，数据看板输出到 `output/{YYYYMMDD}_看板.html`。
 
 ---
 

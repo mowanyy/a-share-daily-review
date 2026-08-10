@@ -19,6 +19,7 @@
 | `system.analyst` | [system/复盘分析师.md](system/复盘分析师.md) | report | 各模块摘要 | 全文复盘框架与纪律 | draft |
 | `system.assistant` | [system/问答助手.md](system/问答助手.md) | qa | 工具调用结果 | 对话回答 | draft |
 | `module.emotion` | [modules/情绪温度.md](modules/情绪温度.md) | report | 涨停/炸板/跌停池、多日时序 | 情绪温度章节 | draft |
+| `module.dashboard` | [modules/数据看板.md](modules/数据看板.md) | report | 多日时序、涨停/炸板/跌停池、连板统计、情绪温度 | 多日趋势解读一段 | draft |
 | `module.ladder` | [modules/连板梯队.md](modules/连板梯队.md) | report | 涨停池、连板统计 | 梯队章节 | draft |
 | `module.theme` | [modules/题材周期与归类.md](modules/题材周期与归类.md) | report | 题材+成分+多日时序 | 题材归类章节 | draft |
 | `module.break` | [modules/炸板净流入.md](modules/炸板净流入.md) | report | 炸板池、资金流 | 炸板资金章节 | draft |
@@ -36,12 +37,16 @@
 ```
 报告模式（自动复盘）
   system.analyst
-    ├─ module.emotion → 情绪温度章节（市场级定位）
-    ├─ module.ladder  → 连板梯队章节
-    ├─ module.theme   → 题材归类章节
-    ├─ module.break   → 炸板资金章节
-    ├─ module.lhb     → 龙虎榜游资章节
-    └─ module.plan    → 次日预案章节（引用 strategy.* 战法）
+    ├─ module.emotion   → 情绪温度章节（市场级定位）
+    ├─ module.ladder    → 连板梯队章节
+    ├─ module.theme     → 题材归类章节
+    ├─ module.break     → 炸板资金章节
+    ├─ module.lhb       → 龙虎榜游资章节
+    └─ module.plan      → 次日预案章节（引用 strategy.* 战法）
+
+看板模式（数据看板 + LLM 多日趋势解读）
+  module.dashboard → 「多日趋势解读」一段（数据看板主体为程序核算图表，
+                     本 prompt 只负责顶部一段趋势解读；无 key/失败时降级为「（未生成解读）」）
 
 问答模式（交互对话）
   system.assistant

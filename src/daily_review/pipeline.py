@@ -98,9 +98,12 @@ def _build_concept_map(zt_codes: list[str], trade_date: str) -> dict[str, list[s
     return {c: vs for c, vs in mapping.items() if vs}
 
 
-def collect(trade_date: str) -> dict:
-    """采集指定交易日全部输入数据（含时间线）。返回结构化 dict。"""
-    print(f"[采集] 交易日 {trade_date}")
+def collect(trade_date: str, n_days: int = TIMELINE_DAYS) -> dict:
+    """采集指定交易日全部输入数据（含时间线）。返回结构化 dict。
+
+    n_days：时间线长度（今日 + 历史交易日数），review 缺省 6，看板可传更大窗口（如 10）。
+    """
+    print(f"[采集] 交易日 {trade_date}（时间线 {n_days} 日）")
 
     # 1. 当日池子（zb/dt 带抓取成功标志，供情绪温度区分「0 家」与「缺失」）
     zt = _cached("zt_pool", trade_date, lambda: em.fetch_zt_pool(trade_date))
@@ -109,7 +112,7 @@ def collect(trade_date: str) -> dict:
     print(f"  涨停 {len(zt)} / 炸板 {len(zb)} / 跌停 {len(dt)}")
 
     # 2. 时间线：近 N 交易日（由近及远），含每日本身池子（缓存复用）
-    dates = em.resolve_recent_trade_dates(trade_date, n_days=TIMELINE_DAYS)
+    dates = em.resolve_recent_trade_dates(trade_date, n_days=n_days)
     if trade_date not in dates:
         dates = [trade_date] + dates
     print(f"  时间线 {len(dates)} 个交易日: {','.join(dates)}")

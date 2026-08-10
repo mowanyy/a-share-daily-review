@@ -1,16 +1,19 @@
-"""命令行入口：python -m daily_review kline / realtime / review。
+"""命令行入口：python -m daily_review kline / realtime / review / dashboard。
 
 示例：
   python -m daily_review kline --code 600000 --lmt 30
   python -m daily_review realtime --codes 600601,002398,600789
   python -m daily_review review --date 20260806 --no-llm
   python -m daily_review review            # 缺省探测最近交易日，需 .env 配置 DEEPSEEK_API_KEY
+  python -m daily_review dashboard --date 20260806 --no-llm --open
+  python -m daily_review dashboard         # 近 10 个交易日，缺省探测最近交易日
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import webbrowser
 from datetime import datetime
 
 from daily_review.config import get_settings
@@ -96,17 +99,21 @@ def _print_summary(ind: dict) -> None:
         print("龙虎榜 未更新或为空（需盘后 17:30 之后）")
 
 
+def _probe_recent_date() -> str:
+    """缺省交易日：探测最近有涨停数据的交易日（空则退化为今天）。"""
+    dates = eastmoney_pool.resolve_recent_trade_dates(
+        datetime.today().strftime("%Y%m%d"), n_days=1
+    )
+    return dates[0] if dates else datetime.today().strftime("%Y%m%d")
+
+
 def _cmd_review(args) -> None:
     from daily_review.llm.client import LLMError
     from daily_review.llm.reporter import generate_report
     from daily_review.pipeline import collect, compute
 
-    trade_date = args.date or ""
-    if not trade_date:
-        dates = eastmoney_pool.resolve_recent_trade_dates(
-            datetime.today().strftime("%Y%m%d"), n_days=1
-        )
-        trade_date = dates[0] if dates else datetime.today().strftime("%Y%m%d")
+    trade_date = args.date or _probe_recent_date()
+    if not args.date:
         print(f"[review] 缺省交易日: {trade_date}")
 
     collected = collect(trade_date)
@@ -124,9 +131,24 @@ def _cmd_review(args) -> None:
     print(f"（{len(md.splitlines())} 行）")
 
 
+def _cmd_dashboard(args) -> None:
+    from daily_review.dashboard import generate_dashboard
+
+    trade_date = args.date or _probe_recent_date()
+    if not args.date:
+        print(f"[dashboard] 缺省交易日: {trade_date}")
+    if args.days < 2:
+        print("[dashboard] --days 至少为 2，已按 2 处理")
+        args.days = 2
+    generate_dashboard(trade_date, n_days=args.days, no_llm=args.no_llm)
+    path = get_settings().output_dir / f"{trade_date}_看板.html"
+    if args.open:
+        webbrowser.open(path.resolve().as_uri())
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="daily-review", description="每日复盘 · 数据采集 + 端到端复盘 CLI（v0.4）"
+        prog="daily-review", description="每日复盘 · 数据采集 + 端到端复盘 CLI（v0.6）"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -152,6 +174,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-llm", action="store_true", help="只采集+算指标，跳过 LLM 报告"
     )
     p_rev.set_defaults(func=_cmd_review)
+
+    p_dash = sub.add_parser(
+        "dashboard",
+        help="数据看板：近 N 日趋势图表（单文件 HTML）+ LLM 多日解读",
+    )
+    p_dash.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
+    p_dash.add_argument("--days", type=int, default=10, help="近 N 个交易日（默认 10）")
+    p_dash.add_argument(
+        "--no-llm", action="store_true", help="跳过 LLM 多日趋势解读（看板照常渲染）"
+    )
+    p_dash.add_argument(
+        "--open", action="store_true", help="生成后用系统默认浏览器打开"
+    )
+    p_dash.set_defaults(func=_cmd_dashboard)
 
     return parser
 

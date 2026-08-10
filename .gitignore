@@ -9,6 +9,7 @@ __pycache__/
 data/*/
 output/*/
 output/*.md
+output/*.html
 *.csv
 
 # 本地配置
