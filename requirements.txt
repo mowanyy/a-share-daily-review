@@ -1,5 +1,7 @@
 # 运行时依赖（锁定自 mowan_dm 环境实测版本，2026-08-06）
 # 安装：python -m pip install -r requirements.txt  （仅允许装进 mowan_dm 环境或本项目文件夹）
+# 向量检索增强（可选，装失败不阻塞）：qa --setup 会装 sentence-transformers / modelscope
 pandas==3.0.3
 numpy==2.5.1
 requests==2.34.2
+scikit-learn==1.9.0

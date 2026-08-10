@@ -4,19 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "daily-review"
-version = "0.6.0"
-description = "A股超短连板收盘复盘系统：情绪温度 / 连板梯队 / 题材周期 / 炸板资金 / 龙虎榜游资 / AI复盘与次日预案"
+version = "0.7.0"
+description = "A股超短连板收盘复盘系统：情绪温度 / 连板梯队 / 题材周期 / 炸板资金 / 龙虎榜游资 / AI复盘 / RAG问答"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
     "pandas>=2.0",
     "requests>=2.31",
+    "scikit-learn>=1.4",
 ]
 
 [project.optional-dependencies]
-# 后续迭代启用：
-# llm   = ["anthropic"]
+# 向量检索增强（可选）：bge-small-zh 本地 embedding，缺失时自动降级纯关键词
+kb = [
+    "sentence-transformers",
+    "modelscope",
+]
 dev = ["pytest"]
 
 [project.scripts]

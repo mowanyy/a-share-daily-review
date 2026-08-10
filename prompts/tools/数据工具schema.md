@@ -1,9 +1,9 @@
 ---
 id: tool.datatools
 name: 数据工具 Schema
-version: 0.1.0
+version: 0.2.0
 role: tool
-status: draft
+status: active
 depends: []
 output: 问答模式可用工具的 JSON Schema（function-calling 契约）
 ---
@@ -11,7 +11,7 @@ output: 问答模式可用工具的 JSON Schema（function-calling 契约）
 # 数据工具 Schema（问答模式）
 
 > 问答模式下，问答助手通过以下工具**按需获取数据**再作答。工具返回的字段遵循 [docs/数据结构.md](../../docs/数据结构.md)。
-> 本文件定义函数契约（名称、入参、返回结构），实现层（v0.2 采集）对应落地。
+> 本文件定义函数契约（名称、入参、返回结构），实现层由 `kb/tools.py`（v0.7）落地：工具名即 function-calling 的 function name，返回按契约字段紧凑 JSON。
 
 ## 工具清单
 
@@ -75,7 +75,8 @@ output: 问答模式可用工具的 JSON Schema（function-calling 契约）
 3. 交易日参数为 `YYYYMMDD`；「最近交易日」由交易日历工具解析
 4. 每个工具返回附带 `trade_date`（实际数据日期），便于核对
 
-## 实现备注（v0.2）
+## 实现备注（v0.7）
 
 - 工具名称、入参即为问答模式 function-calling 的 function name / parameters
-- 实现时由 `eastmoney_client` 提供底层查询，工具层做入参校验与缓存
+- 实现于 `src/daily_review/kb/tools.py`：按交易日 memo 复用管道采集/指标（同一会话不重复抓取）
+- 结果用紧凑 JSON 返回；异常/未知工具返回 `{"error": ...}`，问答助手如实说明，不编造

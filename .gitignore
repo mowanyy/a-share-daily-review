@@ -14,3 +14,7 @@ output/*.html
 
 # 本地配置
 .env
+
+# 问答模式：向量模型与知识库缓存（不入库；knowledge/ 本身入库）
+models/
+.kb_cache/

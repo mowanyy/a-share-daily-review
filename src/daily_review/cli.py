@@ -1,4 +1,4 @@
-"""命令行入口：python -m daily_review kline / realtime / review / dashboard。
+"""命令行入口：python -m daily_review kline / realtime / review / dashboard / qa。
 
 示例：
   python -m daily_review kline --code 600000 --lmt 30
@@ -7,6 +7,9 @@
   python -m daily_review review            # 缺省探测最近交易日，需 .env 配置 DEEPSEEK_API_KEY
   python -m daily_review dashboard --date 20260806 --no-llm --open
   python -m daily_review dashboard         # 近 10 个交易日，缺省探测最近交易日
+  python -m daily_review qa                # 交互问答（RAG 知识库 + 数据工具），无 key 也可跑
+  python -m daily_review qa --ask "什么是炸板率？" --no-embedding
+  python -m daily_review qa --setup        # 安装向量检索依赖并下载 bge 模型
 """
 
 from __future__ import annotations
@@ -22,6 +25,19 @@ from daily_review.data import eastmoney, eastmoney_pool, repo, sina
 
 def _print(df) -> None:
     print(df.to_string(index=False))
+
+
+def _console_safe(text: str) -> str:
+    """把文本转成当前控制台可编码的版本（GBK 控制台对 emoji 等会崩，用 ? 替换）。
+
+    问答的回答/出处可能含 emoji（如知识库示例里的图表符号、LLM 输出），print 前必须过一遍。
+    """
+    enc = sys.stdout.encoding or "utf-8"
+    try:
+        text.encode(enc)
+        return text
+    except UnicodeEncodeError:
+        return text.encode(enc, "replace").decode(enc)
 
 
 def _fmt_amount(v) -> str:
@@ -131,6 +147,69 @@ def _cmd_review(args) -> None:
     print(f"（{len(md.splitlines())} 行）")
 
 
+def _qa_repl(session) -> None:
+    """交互问答 REPL：逐轮提问，展示回答与知识库出处。"""
+    print("问答模式（RAG 短线知识库 + 数据工具）。输入 exit / quit / 退出 结束。")
+    while True:
+        try:
+            q = input("\n你> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if not q:
+            continue
+        if q.lower() in ("exit", "quit", "退出", "q"):
+            return
+        result = session.answer(q)
+        print(_console_safe(result.answer))
+        if result.tool_rounds:
+            print(f"（调用了 {result.tool_rounds} 轮数据工具）")
+        print("\n[出处]")
+        print(_console_safe(render_sources(result.sources)))
+
+
+def _cmd_qa(args) -> None:
+    from daily_review.kb import embedding
+    from daily_review.kb.index import KnowledgeIndex
+    from daily_review.kb.qa import QASession, render_sources
+
+    if args.setup:
+        ok = embedding.install_embedding()
+        print("向量检索环境已就绪" if ok else "向量检索环境安装失败（可继续用纯关键词检索）")
+        return
+
+    index = KnowledgeIndex(
+        use_embedding=not args.no_embedding,
+        include_output_reports=args.with_reports,
+    )
+    index.ensure_ready(force=args.rebuild)
+    mode = "混合检索" if index.vector_available else "关键词检索"
+    if not args.no_embedding and not index.vector_available:
+        print("提示: 向量检索未启用（未装 sentence-transformers 或模型缺失），当前为纯关键词检索（可 --setup 安装）")
+    print(f"知识库就绪: {len(index.chunks)} 个片段 / {mode}")
+
+    trade_date = args.date or _probe_recent_date()
+    if not args.date:
+        print(f"[qa] 缺省交易日: {trade_date}")
+    session = QASession(
+        index,
+        trade_date=trade_date,
+        top_k=args.top_k,
+        use_embedding=not args.no_embedding,
+    )
+
+    if args.ask:
+        result = session.answer(args.ask)
+        print(_console_safe(result.answer))
+        if result.tool_rounds:
+            print(f"（调用了 {result.tool_rounds} 轮数据工具）")
+        print("\n[出处]")
+        print(_console_safe(render_sources(result.sources)))
+        return
+
+    _qa_repl(session)
+
+
 def _cmd_dashboard(args) -> None:
     from daily_review.dashboard import generate_dashboard
 
@@ -148,7 +227,7 @@ def _cmd_dashboard(args) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="daily-review", description="每日复盘 · 数据采集 + 端到端复盘 CLI（v0.6）"
+        prog="daily-review", description="每日复盘 · 数据采集 + 端到端复盘 CLI（v0.7）"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -188,6 +267,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--open", action="store_true", help="生成后用系统默认浏览器打开"
     )
     p_dash.set_defaults(func=_cmd_dashboard)
+
+    p_qa = sub.add_parser(
+        "qa",
+        help="交互问答：RAG 短线知识库（持续更新）+ 数据工具（function-calling）",
+    )
+    p_qa.add_argument("--ask", default="", help="一次性提问并退出（缺省进入交互 REPL）")
+    p_qa.add_argument("--date", default="", help="默认交易日 YYYYMMDD（数据工具用），缺省探测最近交易日")
+    p_qa.add_argument("--rebuild", action="store_true", help="强制重建知识库索引")
+    p_qa.add_argument("--setup", action="store_true", help="安装向量检索依赖并从 ModelScope 下载 bge 模型")
+    p_qa.add_argument("--top-k", type=int, default=5, help="检索返回片段数（默认 5）")
+    p_qa.add_argument("--no-embedding", action="store_true", help="禁用向量检索（纯关键词）")
+    p_qa.add_argument("--with-reports", action="store_true", help="把 output/*_复盘.md 也纳入知识库")
+    p_qa.set_defaults(func=_cmd_qa)
 
     return parser
 

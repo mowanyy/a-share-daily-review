@@ -2,7 +2,7 @@
 
 > 基于 Python 的 A 股收盘后复盘工具，聚焦**超短连板**风格：情绪温度、连板梯队、题材运行周期、炸板资金、龙虎榜游资，并为「个人战法 → AI 次日预案」预留扩展位。
 
-**当前阶段**：`v0.6 · 端到端复盘 + 数据看板已可用`（东财池子/资金流/龙虎榜采集 → 情绪温度/连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；另可生成近 10 个交易日趋势数据看板单文件 HTML；问答模式与个人战法下期）
+**当前阶段**：`v0.7 · 端到端复盘 + 数据看板 + 交互问答已可用`（东财池子/资金流/龙虎榜采集 → 情绪温度/连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；近 10 个交易日趋势数据看板单文件 HTML；**交互问答**：RAG 短线知识库【混合检索 + 持续更新】+ 数据工具 function-calling；个人战法下期）
 
 ---
 
@@ -41,17 +41,20 @@
 │   ├── strategies/     #   战法库（可插拔）
 │   ├── examples/       #   Few-shot 示例
 │   ├── glossary/       #   术语表
-│   └── tools/          #   问答模式工具定义
+│   └── tools/          #   问答模式工具定义（tool.datatools 契约）
+├── knowledge/          # 个人短线知识库（.md 自动入库，持续更新；含 README 说明）
 ├── src/daily_review/   # Python 包
 │   ├── data/           #   采集层：eastmoney_pool（池子/资金流/板块）eastmoney_lhb（龙虎榜）hotmoney_seats（游资名单）eastmoney sina repo http_client
 │   ├── analysis/       #   指标层：emotion（情绪温度）ladder（连板梯队）theme（题材周期）break_flow（炸板资金）lhb（游资分析）
-│   ├── llm/            #   LLM 层：client（DeepSeek）reporter（模块 prompt 组装报告）
+│   ├── llm/            #   LLM 层：client（DeepSeek，含 function-calling）reporter（模块 prompt 组装报告）
+│   ├── kb/             #   问答知识库：corpus（切块）manifest（增量）embedding（向量可选）index（检索）tools（数据工具）qa（会话）
 │   ├── dashboard.py    #   数据看板：近 N 日趋势图表（单文件 HTML）+ LLM 多日解读
 │   ├── pipeline.py     #   管道：采集 → 指标 → 报告
-│   └── cli.py          #   CLI：kline / realtime / review / dashboard
+│   └── cli.py          #   CLI：kline / realtime / review / dashboard / qa
 ├── data/               # 数据缓存 data/{YYYYMMDD}/*.csv（不入库）
 ├── output/             # 复盘报告 output/{YYYYMMDD}_复盘.md、数据看板 output/{YYYYMMDD}_看板.html（不入库）
-├── tests/              # 测试（离线：池子解析 / 指标 / prompt 一致性 / 载荷对齐）
+├── models/             # 向量模型 bge-small-zh-v1.5（qa --setup 下载，不入库）
+├── tests/              # 测试（离线：池子解析 / 指标 / prompt 一致性 / 知识库与问答）
 ├── requirements.txt    # 运行时依赖（锁定版本）
 ├── requirements-dev.txt# 开发依赖
 └── pyproject.toml
@@ -83,9 +86,16 @@ PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806 --no-llm
 # 缺省探测最近交易日 + 用系统浏览器打开 + 附 LLM 多日趋势解读
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --open
+
+# ★ 交互问答（v0.7）：RAG 短线知识库 + 数据工具（--ask 一次性提问，缺省进 REPL）
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa --ask "什么是炸板率？" --no-embedding
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa --setup   # 安装向量检索依赖并下载 bge 模型
 ```
 
 > **LLM 密钥**：首次使用前在项目根目录 `.env` 写入 `DEEPSEEK_API_KEY=sk-xxx`（`.env` 已被 gitignore，不入库）。数据自动落盘到 `data/{YYYYMMDD}/`，报告输出到 `output/{YYYYMMDD}_复盘.md`，数据看板输出到 `output/{YYYYMMDD}_看板.html`。
+>
+> **问答知识库**：`qa` 自动收录 `prompts/**` + `docs/` 部分 + `knowledge/`（往 `knowledge/` 放 `.md` 即自动增量重索引，详见 [knowledge/README.md](knowledge/README.md)）；向量检索为可选增强，未装时自动降级纯关键词。
 
 ---
 

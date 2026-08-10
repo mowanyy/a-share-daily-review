@@ -17,7 +17,7 @@
 | ID | 文件 | 角色 | 依赖数据 | 输出 | 状态 |
 |---|---|---|---|---|---|
 | `system.analyst` | [system/复盘分析师.md](system/复盘分析师.md) | report | 各模块摘要 | 全文复盘框架与纪律 | draft |
-| `system.assistant` | [system/问答助手.md](system/问答助手.md) | qa | 工具调用结果 | 对话回答 | draft |
+| `system.assistant` | [system/问答助手.md](system/问答助手.md) | qa | 知识库(RAG)片段 + 工具调用结果 | 对话回答 | active |
 | `module.emotion` | [modules/情绪温度.md](modules/情绪温度.md) | report | 涨停/炸板/跌停池、多日时序 | 情绪温度章节 | draft |
 | `module.dashboard` | [modules/数据看板.md](modules/数据看板.md) | report | 多日时序、涨停/炸板/跌停池、连板统计、情绪温度 | 多日趋势解读一段 | draft |
 | `module.ladder` | [modules/连板梯队.md](modules/连板梯队.md) | report | 涨停池、连板统计 | 梯队章节 | draft |
@@ -28,7 +28,7 @@
 | `strategy.template` | [strategies/战法模板.md](strategies/战法模板.md) | strategy | —（模板） | 战法文件结构 | draft |
 | `strategy.example` | [strategies/示例-连板接力.md](strategies/示例-连板接力.md) | strategy | —（示例） | 示范战法 | draft |
 | `example.report` | [examples/复盘示例_20260806.md](examples/复盘示例_20260806.md) | example | 示意数据 | 复盘范文 | draft |
-| `tool.datatools` | [tools/数据工具schema.md](tools/数据工具schema.md) | tool | —（定义） | 工具 JSON Schema | draft |
+| `tool.datatools` | [tools/数据工具schema.md](tools/数据工具schema.md) | tool | —（定义） | 工具 JSON Schema | active |
 
 ---
 
@@ -48,9 +48,11 @@
   module.dashboard → 「多日趋势解读」一段（数据看板主体为程序核算图表，
                      本 prompt 只负责顶部一段趋势解读；无 key/失败时降级为「（未生成解读）」）
 
-问答模式（交互对话）
+问答模式（交互对话，v0.7）
   system.assistant
-    └─ tool.datatools（按需查数据，再作答）
+    ├─ 知识库(RAG)：prompts/** + docs/{需求分析,数据结构,战法规范} + knowledge/**
+    │    自动入库 → 检索片段接地（[来源]标注），用户往 knowledge/ 放 .md 即自动重索引
+    └─ tool.datatools（数据问题按需查数据，再作答）
 ```
 
 ## 状态说明

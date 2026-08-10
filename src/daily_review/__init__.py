@@ -10,6 +10,9 @@ v0.5：新增情绪温度——涨停数/空间板高度/晋级延续率/炸板�
       0–100 温度分 + 情绪周期阶段（冰点期/修复期/高潮期/退潮期），报告章节扩展为七章（情绪温度）。
 v0.6：新增数据看板——近 10 个交易日趋势图表（自包含单文件 HTML，纯 JS + 内联 SVG），
       顶部附 DeepSeek 多日趋势解读（可 --no-llm 降级），dashboard CLI 子命令。
+v0.7：新增交互问答——RAG 短线知识库（混合检索：sklearn 关键词 n-gram + 可选 bge-small-zh
+      向量 + RRF 融合；源= prompts/** + docs/{3 份} + knowledge/** 自动收录、sha256 增量重建，
+      持续更新）+ 6 个数据工具 function-calling（tool.datatools 契约落地），qa CLI 子命令。
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
