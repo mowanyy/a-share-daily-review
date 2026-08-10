@@ -45,14 +45,16 @@ def _zfill_codes(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _cached(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame]) -> pd.DataFrame:
+def _cached(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame],
+            *, use_cache: bool = True) -> pd.DataFrame:
     """CSV 缓存优先；空结果不缓存（下次重取）。
 
+    use_cache=False：跳过缓存直接重取（当日收盘后作废盘中快照用，见 collect）。
     读缓存时对 `code` 列做零填充——CSV 往返会把前导零（如 002428 → 2428）丢失，
     导致与 API 直取（字符串 code）的跨模块匹配（炸板资金流 / 龙虎榜联动）失败。
     """
     settings = get_settings()
-    if settings.cache_enabled:
+    if use_cache and settings.cache_enabled:
         try:
             df = load_csv(name, trade_date)
             if not df.empty:
@@ -65,14 +67,15 @@ def _cached(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame]) ->
     return df
 
 
-def _fetch_opt(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame]) -> tuple[pd.DataFrame, bool]:
+def _fetch_opt(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame],
+               *, use_cache: bool = True) -> tuple[pd.DataFrame, bool]:
     """带成功标志的缓存拉取：失败返回 (空表, False)，绝不中断 collect。
 
     供情绪温度区分「真实 0 家」（_ok=True 且空表 → 该维记满分）与「数据缺失」
     （_ok=False → 该维剔除重归一）。
     """
     try:
-        return _cached(name, trade_date, fetch_fn), True
+        return _cached(name, trade_date, fetch_fn, use_cache=use_cache), True
     except Exception:
         return _empty_df(["trade_date", "code"]), False
 
@@ -105,10 +108,17 @@ def collect(trade_date: str, n_days: int = TIMELINE_DAYS) -> dict:
     """
     print(f"[采集] 交易日 {trade_date}（时间线 {n_days} 日）")
 
+    # 当日收盘后（>=15:00）重跑同一日期：作废盘中快照缓存，强制重取完整数据
+    # （否则盘中先跑过的非空 zt_pool 会被永久复用，收盘后重跑永远读到陈旧快照）
+    now = datetime.now()
+    today = now.strftime("%Y%m%d")
+    after_close = trade_date == today and now.time() >= datetime.strptime("15:00", "%H:%M").time()
+    fresh = not after_close
+
     # 1. 当日池子（zb/dt 带抓取成功标志，供情绪温度区分「0 家」与「缺失」）
-    zt = _cached("zt_pool", trade_date, lambda: em.fetch_zt_pool(trade_date))
-    zb, zb_ok = _fetch_opt("zb_pool", trade_date, lambda: em.fetch_zb_pool(trade_date))
-    dt, dt_ok = _fetch_opt("dt_pool", trade_date, lambda: em.fetch_dt_pool(trade_date))
+    zt = _cached("zt_pool", trade_date, lambda: em.fetch_zt_pool(trade_date), use_cache=fresh)
+    zb, zb_ok = _fetch_opt("zb_pool", trade_date, lambda: em.fetch_zb_pool(trade_date), use_cache=fresh)
+    dt, dt_ok = _fetch_opt("dt_pool", trade_date, lambda: em.fetch_dt_pool(trade_date), use_cache=fresh)
     print(f"  涨停 {len(zt)} / 炸板 {len(zb)} / 跌停 {len(dt)}")
 
     # 2. 时间线：近 N 交易日（由近及远），含每日本身池子（缓存复用）
@@ -119,7 +129,8 @@ def collect(trade_date: str, n_days: int = TIMELINE_DAYS) -> dict:
 
     timeline: list[tuple[str, pd.DataFrame]] = []
     for d in dates:
-        pool = _cached(f"zt_pool", d, lambda d=d: em.fetch_zt_pool(d))
+        pool = _cached("zt_pool", d, lambda d=d: em.fetch_zt_pool(d),
+                       use_cache=(d != today or fresh))
         timeline.append((d, pool))
 
     # 空间板高度序列（最新在前）
@@ -178,7 +189,7 @@ def collect(trade_date: str, n_days: int = TIMELINE_DAYS) -> dict:
     print(f"  龙虎榜 {len(lhb_daily)} 条 / 席位 {len(lhb_seats)} 条")
 
     # 盘中标记：当日且当前时间 < 15:00（情绪温度记「盘中预览」）
-    is_intraday = trade_date == datetime.now().strftime("%Y%m%d") and datetime.now().hour < 15
+    is_intraday = trade_date == today and now.hour < 15
 
     return {
         "trade_date": trade_date,

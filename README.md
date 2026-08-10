@@ -2,7 +2,7 @@
 
 > 基于 Python 的 A 股收盘后复盘工具，聚焦**超短连板**风格：情绪温度、连板梯队、题材运行周期、炸板资金、龙虎榜游资，并为「个人战法 → AI 次日预案」预留扩展位。
 
-**当前阶段**：`v0.8 · Flask 全套工作台 + 个人战法已可用`（东财池子/资金流/龙虎榜采集 → 情绪温度/连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；近 10 个交易日趋势数据看板单文件 HTML；**交互问答**：RAG 短线知识库【混合检索 + 持续更新】+ 数据工具 function-calling；**Web 工作台**：战法管理（页面上传个人战法，落盘 `data/strategies/` 不入库）+ 页面跑复盘看全文报告与次日预案 + 问答 + 数据看板）
+**当前阶段**：`v0.9 · Flask 全套工作台 + 个人战法 + 图形启动器已可用`（东财池子/资金流/龙虎榜采集 → 情绪温度/连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；近 10 个交易日趋势数据看板单文件 HTML；**交互问答**：RAG 短线知识库【混合检索 + 持续更新】+ 数据工具 function-calling；**Web 工作台**：战法管理（页面上传个人战法，落盘 `data/strategies/` 不入库）+ 页面跑复盘看全文报告与次日预案 + 问答 + 数据看板；**图形启动器**：双击 `启动.bat` 或桌面快捷方式「每日复盘」打开 tkinter 窗口，一键启动 Web 工作台 / 跑复盘 / 数据看板 / 交互问答）
 
 ---
 
@@ -28,6 +28,8 @@
 每日复盘/
 ├── CLAUDE.md           # AI 索引入口
 ├── README.md           # 人类索引入口
+├── 启动.bat            # 图形启动器入口（双击运行，无控制台闪窗）
+├── launcher.py         # 启动器根引导脚本（桌面快捷方式指向它；自插入 src 到 sys.path）
 ├── docs/               # 需求与设计文档
 │   ├── 需求分析.md     # 完整需求分析
 │   ├── 数据结构.md     # 数据对象定义
@@ -49,9 +51,11 @@
 │   ├── llm/            #   LLM 层：client（DeepSeek，含 function-calling）reporter（模块 prompt 组装报告）
 │   ├── kb/             #   问答知识库：corpus（切块）manifest（增量）embedding（向量可选）index（检索）tools（数据工具）qa（会话）
 │   ├── web/            #   Web 工作台（v0.8，Flask）：app（create_app）routes（页面+API）strategy（战法服务）jobs（后台复盘任务）md（Markdown 渲染）templates/
+│   ├── launcher.py     #   图形启动器纯核心（v0.9）：resolve_runtime / build_*_argv / 快捷方式 / 自检（不 import tkinter，可离线单测）
+│   ├── launcher_gui.py #   图形启动器窗口（v0.9，唯一 import tkinter 的文件）
 │   ├── dashboard.py    #   数据看板：近 N 日趋势图表（单文件 HTML）+ LLM 多日解读
 │   ├── pipeline.py     #   管道：采集 → 指标 → 报告
-│   └── cli.py          #   CLI：kline / realtime / review / dashboard / qa / web
+│   └── cli.py          #   CLI：kline / realtime / review / dashboard / qa / web / launch
 ├── data/               # 数据缓存 data/{YYYYMMDD}/*.csv（不入库）
 ├── output/             # 复盘报告 output/{YYYYMMDD}_复盘.md、数据看板 output/{YYYYMMDD}_看板.html（不入库）
 ├── models/             # 向量模型 bge-small-zh-v1.5（qa --setup 下载，不入库）
@@ -95,6 +99,11 @@ PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa --set
 
 # ★ Web 工作台（v0.8，Flask）：战法管理 + 跑复盘看报告/次日预案 + 问答 + 数据看板
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review web --open   # 默认 127.0.0.1:5000，用系统浏览器打开
+
+# ★ 图形启动器（v0.9，tkinter 窗口）：一键启动 Web 工作台 / 跑复盘 / 数据看板 / 交互问答
+# 双击项目根目录 启动.bat（或桌面快捷方式「每日复盘」）即可；命令行等价：
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch --dry-run   # 自检：打印环境与各子命令，不弹窗
 ```
 
 > **LLM 密钥**：首次使用前在项目根目录 `.env` 写入 `DEEPSEEK_API_KEY=sk-xxx`（`.env` 已被 gitignore，不入库）。数据自动落盘到 `data/{YYYYMMDD}/`，报告输出到 `output/{YYYYMMDD}_复盘.md`，数据看板输出到 `output/{YYYYMMDD}_看板.html`。

@@ -11,6 +11,8 @@
   python -m daily_review qa --ask "什么是炸板率？" --no-embedding
   python -m daily_review qa --setup        # 安装向量检索依赖并下载 bge 模型
   python -m daily_review web               # Web 工作台（战法管理 + 跑复盘 + 问答 + 数据看板）
+  python -m daily_review launch            # 图形启动器（tkinter 窗口；双击 启动.bat 同效）
+  python -m daily_review launch --dry-run  # 自检：打印运行环境与各子命令，不弹窗
 """
 
 from __future__ import annotations
@@ -146,19 +148,30 @@ def _cmd_review(args) -> None:
                 f"适用 {strategy.applies_to or '见正文'}）→ 次日预案按该战法执行"
             )
 
-    collected = collect(trade_date)
-    indicators = compute(collected)
+    try:
+        collected = collect(trade_date)
+        indicators = compute(collected)
+    except Exception as exc:  # noqa: BLE001 —— 网络/解析失败映射为一行可读错误，不抛原始 traceback
+        print(f"[review] 采集或指标计算失败：{type(exc).__name__}: {exc}")
+        print("（请检查网络是否可达东方财富接口；已有本地数据时可加 --no-llm 仅跑指标）")
+        return 1
     _print_summary(indicators)
 
     if args.no_llm:
         print("\n已跳过 LLM 报告（--no-llm）；数据与指标已就绪")
-        return
+        return 0
 
     print("\n[LLM] 生成复盘报告（DeepSeek）...")
-    md = generate_report(indicators, trade_date, strategy=strategy)
+    try:
+        md = generate_report(indicators, trade_date, strategy=strategy)
+    except LLMError as exc:
+        print(f"[review] LLM 报告生成失败：{exc}")
+        print("（请确认 .env 已配置 DEEPSEEK_API_KEY；或加 --no-llm 跳过 LLM）")
+        return 1
     out = get_settings().output_dir / f"{trade_date}_复盘.md"
     print(f"\n已生成: {out}")
     print(f"（{len(md.splitlines())} 行）")
+    return 0
 
 
 def _cmd_web(args) -> None:
@@ -251,9 +264,15 @@ def _cmd_dashboard(args) -> None:
         webbrowser.open(path.resolve().as_uri())
 
 
+def _cmd_launch(args) -> int:
+    from daily_review.launcher import run_gui
+
+    return run_gui(dry_run=args.dry_run)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="daily-review", description="每日复盘 · 数据采集 + 端到端复盘 CLI（v0.8）"
+        prog="daily-review", description="每日复盘 · 数据采集 + 端到端复盘 CLI（v0.9）"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -323,13 +342,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_web.set_defaults(func=_cmd_web)
 
+    p_launch = sub.add_parser(
+        "launch",
+        help="图形启动器（tkinter 窗口，双击 启动.bat 同效；--dry-run 打印运行环境与命令不弹窗）",
+    )
+    p_launch.add_argument(
+        "--dry-run", "--self-check", action="store_true", dest="dry_run",
+        help="打印解析出的运行环境与各子命令，不打开窗口（自检）",
+    )
+    p_launch.set_defaults(func=_cmd_launch)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    args.func(args)
-    return 0
+    result = args.func(args)
+    return result if isinstance(result, int) else 0
 
 
 if __name__ == "__main__":

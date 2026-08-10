@@ -17,6 +17,10 @@ v0.8：新增 Web 工作台（Flask）——战法管理（页面上传/编辑/�
       data/strategies/，不入项目）+ 跑复盘看七章报告与次日预案（可指定个人战法驱动，
       后台线程单飞任务）+ 问答 QA + 数据看板；个人战法 → AI 次日预案落地（module.plan
       注入战法正文，web CLI 子命令，review --strategy <id>）。
+v0.9：新增图形启动器——双击 启动.bat 或桌面快捷方式「每日复盘」打开 tkinter 窗口，
+      一键启动 Web 工作台 / 跑复盘 / 数据看板 / 交互问答；launcher.py 纯核心（可离线
+      单测）+ launcher_gui.py 窗口 + launch CLI 子命令（--dry-run 无头自检）；子进程
+      用控制台 python.exe + PYTHONIOENCODING=utf-8 + CREATE_NO_WINDOW/NEW_CONSOLE。
 """
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"

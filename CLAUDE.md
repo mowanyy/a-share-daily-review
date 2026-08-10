@@ -8,7 +8,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
-`v0.8.0`：**端到端复盘 + 数据看板 + 交互问答 + Flask 全套工作台 + 个人战法已可用**——东财涨跌停池/资金流/概念板块采集（`data/eastmoney_pool.py`）、**龙虎榜榜单/买卖席位采集（`data/eastmoney_lhb.py`）+ 知名游资识别名单（`data/hotmoney_seats.py`，可人工增补）**、指标计算（**情绪温度 `analysis/emotion.py`** / 连板梯队 / 题材周期 / 炸板净流入 / 龙虎榜游资，`analysis/`）、**DeepSeek LLM 自动生成 Markdown 复盘报告**（`llm/`）、**数据看板 `dashboard.py`**（近 10 个交易日趋势图表单文件 HTML + LLM 多日趋势解读）、**交互问答 `kb/`**（RAG 短线知识库：`prompts/**`+`docs/` 部分+`knowledge/**`+`data/strategies/**` 自动收录、混合检索【sklearn 关键词 + 可选 bge-small-zh 向量 + RRF 融合】、源文件 sha256 增量重建持续更新；6 个数据工具 function-calling 落地 `tool.datatools`）、**Web 工作台 `web/`**（Flask：战法管理 / 跑复盘看报告与次日预案 / 问答 / 数据看板）、**个人战法 → 次日预案**（`web/strategy.py` 服务 + `llm/reporter.py::generate_report(..., strategy=)` 注入；战法由用户**页面上传**落盘 gitignored `data/strategies/`，**不写死进代码/tracked 目录**）。管道 `pipeline.py` + CLI `review`/`dashboard`/`qa`/`web` 子命令。报告为**七章结构**（总览 / 情绪温度 / 连板梯队 / 题材 / 炸板资金 / 龙虎榜游资 / 次日预案）。运行环境固定为 `E:/conda_envs/envs/mowan_dm/python.exe`（勿改用其他解释器）。
+`v0.9.0`：**端到端复盘 + 数据看板 + 交互问答 + Flask 全套工作台 + 个人战法 + 图形启动器已可用**——东财涨跌停池/资金流/概念板块采集（`data/eastmoney_pool.py`）、**龙虎榜榜单/买卖席位采集（`data/eastmoney_lhb.py`）+ 知名游资识别名单（`data/hotmoney_seats.py`，可人工增补）**、指标计算（**情绪温度 `analysis/emotion.py`** / 连板梯队 / 题材周期 / 炸板净流入 / 龙虎榜游资，`analysis/`）、**DeepSeek LLM 自动生成 Markdown 复盘报告**（`llm/`）、**数据看板 `dashboard.py`**（近 10 个交易日趋势图表单文件 HTML + LLM 多日趋势解读）、**交互问答 `kb/`**（RAG 短线知识库：`prompts/**`+`docs/` 部分+`knowledge/**`+`data/strategies/**` 自动收录、混合检索【sklearn 关键词 + 可选 bge-small-zh 向量 + RRF 融合】、源文件 sha256 增量重建持续更新；6 个数据工具 function-calling 落地 `tool.datatools`）、**Web 工作台 `web/`**（Flask：战法管理 / 跑复盘看报告与次日预案 / 问答 / 数据看板）、**个人战法 → 次日预案**（`web/strategy.py` 服务 + `llm/reporter.py::generate_report(..., strategy=)` 注入；战法由用户**页面上传**落盘 gitignored `data/strategies/`，**不写死进代码/tracked 目录**）、**图形启动器**（`launcher.py` 纯核心 + `launcher_gui.py` tkinter 窗口 + 根目录 `启动.bat`/`launcher.py` + `launch` CLI 子命令 + 桌面快捷方式；一键启动 Web/复盘/看板/问答，`--dry-run` 无头自检）。管道 `pipeline.py` + CLI `review`/`dashboard`/`qa`/`web`/`launch` 子命令。报告为**七章结构**（总览 / 情绪温度 / 连板梯队 / 题材 / 炸板资金 / 龙虎榜游资 / 次日预案）。运行环境固定为 `E:/conda_envs/envs/mowan_dm/python.exe`（勿改用其他解释器）。
 
 **LLM 密钥**：`.env`（不入库，已 gitignore）里 `DEEPSEEK_API_KEY=sk-xxx`；缺 key 时 `review --no-llm` / `dashboard --no-llm` 仍可跑通数据+指标+看板。
 
@@ -32,6 +32,9 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa --ask "什么是炸板率？" --no-embedding
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa --setup          # 安装向量检索依赖+下载 bge 模型
+# 图形启动器（tkinter 窗口；双击根目录 启动.bat 或桌面快捷方式同效；--dry-run 自检不弹窗）
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch --dry-run
 ```
 
 ## 目录地图
@@ -46,7 +49,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `docs/战法规范.md` | 战法编写规范 | 新增/修改战法时 |
 | `prompts/INDEX.md` | **Prompt 总索引**（id→文件→角色→依赖→状态） | 改任何 prompt 前必读 |
 | `prompts/glossary/术语表.md` | 超短术语统一语义 | 写 prompt / 判定术语时 |
-| `src/daily_review/` | Python 包（v0.8：采集层 `data/` + 指标层 `analysis/`（含 `emotion.py`）+ LLM 层 `llm/` + 问答知识库 `kb/`（corpus/manifest/embedding/index/tools/qa）+ 数据看板 `dashboard.py` + Web 工作台 `web/`（app/routes/strategy/jobs/md/templates）+ 管道 `pipeline.py`） | 实现阶段 |
+| `src/daily_review/` | Python 包（v0.9：采集层 `data/` + 指标层 `analysis/`（含 `emotion.py`）+ LLM 层 `llm/` + 问答知识库 `kb/`（corpus/manifest/embedding/index/tools/qa）+ 数据看板 `dashboard.py` + Web 工作台 `web/`（app/routes/strategy/jobs/md/templates）+ 图形启动器 `launcher.py`（纯核心）/`launcher_gui.py`（tkinter 窗口）+ 管道 `pipeline.py`） | 实现阶段 |
 | `knowledge/` | 个人短线知识库（`.md` 自动入库，增量重索引持续更新；含 `README.md` 说明） | 用户维护 |
 
 ## 工作流约定
