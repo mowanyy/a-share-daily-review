@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}问答 · 每日复盘{% endblock %}
+{% block content %}
+<h1>知识库问答</h1>
+<div class="panel">
+  <div class="row">
+    <input type="text" id="q" style="flex:1" placeholder="例如：什么是炸板率？今日连板梯队如何？">
+    <button class="btn primary" id="btnAsk">提问</button>
+  </div>
+  <div class="muted" id="qaHint">
+    RAG 短线知识库（prompts + 文档 + 个人知识 + 个人战法）+ 6 个数据工具（连板梯队 / 题材 / 炸板资金流 / 涨跌停池等）。
+  </div>
+</div>
+<div class="panel" id="answer" hidden>
+  <div id="answerBody"></div>
+  <div class="muted" id="rounds" style="margin-top:6px"></div>
+  <h2>出处</h2>
+  <div id="sources"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function ask(){
+  var q = document.getElementById('q').value.trim();
+  if(!q) return;
+  document.getElementById('btnAsk').disabled = true;
+  document.getElementById('answer').hidden = false;
+  document.getElementById('answerBody').textContent = '思考中…';
+  document.getElementById('sources').textContent = '';
+  api('/api/qa/ask', {method:'POST', body:JSON.stringify({question:q})})
+    .then(function(d){
+      document.getElementById('answerBody').innerHTML = d.answer_html || esc(d.answer);
+      document.getElementById('rounds').textContent = d.tool_rounds
+        ? '（调用了 ' + d.tool_rounds + ' 轮数据工具）' : '';
+      var src = d.sources || [];
+      document.getElementById('sources').innerHTML = src.map(function(h){
+        return '<div class="muted" style="margin-bottom:8px;white-space:pre-wrap">['
+          + esc(h.source_rel) + ' · ' + esc(h.section) + ']' + (h.date ? ' · ' + esc(h.date) : '')
+          + '<br>' + esc(h.text) + '</div>';
+      }).join('') || '<span class="muted">（无检索出处）</span>';
+      if(d.error){ document.getElementById('rounds').textContent = '（LLM 异常：' + esc(d.error) + '）'; }
+      document.getElementById('btnAsk').disabled = false;
+    })
+    .catch(function(e){
+      document.getElementById('answerBody').textContent = '';
+      alert(e.message);
+      document.getElementById('btnAsk').disabled = false;
+    });
+}
+document.getElementById('btnAsk').onclick = ask;
+document.getElementById('q').addEventListener('keydown', function(ev){
+  if(ev.key === 'Enter') ask();
+});
+document.getElementById('q').focus();
+</script>
+{% endblock %}

@@ -63,6 +63,32 @@ def test_chunk_ids_unique_and_stable(kb_root):
     assert "prompts/glossary/术语表.md" in rels
 
 
+def test_discover_sources_includes_user_strategies(kb_root):
+    """用户上传的个人战法（data/strategies/）并入知识库源。"""
+    d = kb_root / "data" / "strategies"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "战法-测试.md").write_text(
+        "---\nid: strategy.user-test\nname: 测试\nrole: strategy\nstatus: draft\n---\n\n"
+        "## 1. 概述\n赚晋级预期差",
+        encoding="utf-8",
+    )
+    rels = [p.relative_to(kb_root).as_posix() for p in discover_sources(kb_root)]
+    assert "data/strategies/战法-测试.md" in rels
+
+
+def test_strategy_chunks_enter_corpus(kb_root):
+    d = kb_root / "data" / "strategies"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "战法-测试.md").write_text(
+        "---\nid: strategy.user-test\nname: 测试\nrole: strategy\nstatus: draft\n---\n\n"
+        "## 1. 概述\n赚晋级预期差",
+        encoding="utf-8",
+    )
+    chunks = build_corpus(kb_root)
+    texts = [c.text for c in chunks]
+    assert any("赚晋级预期差" in t for t in texts)
+
+
 def test_long_text_splits_by_sentence_window():
     para = "。".join("这是第%d个句子内容用于测试长段拆分" % i for i in range(120)) + "。"
     parts = _split_long_text(para, cap=100)

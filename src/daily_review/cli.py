@@ -10,6 +10,7 @@
   python -m daily_review qa                # 交互问答（RAG 知识库 + 数据工具），无 key 也可跑
   python -m daily_review qa --ask "什么是炸板率？" --no-embedding
   python -m daily_review qa --setup        # 安装向量检索依赖并下载 bge 模型
+  python -m daily_review web               # Web 工作台（战法管理 + 跑复盘 + 问答 + 数据看板）
 """
 
 from __future__ import annotations
@@ -132,6 +133,19 @@ def _cmd_review(args) -> None:
     if not args.date:
         print(f"[review] 缺省交易日: {trade_date}")
 
+    strategy = None
+    if args.strategy:
+        from daily_review.web.strategy import get_strategy
+
+        strategy = get_strategy(args.strategy)
+        if strategy is None:
+            print(f"[review] 未找到战法 {args.strategy}，按通用预案处理")
+        else:
+            print(
+                f"[review] 战法: {strategy.name}（v{strategy.version or '0.1.0'}，"
+                f"适用 {strategy.applies_to or '见正文'}）→ 次日预案按该战法执行"
+            )
+
     collected = collect(trade_date)
     indicators = compute(collected)
     _print_summary(indicators)
@@ -141,10 +155,22 @@ def _cmd_review(args) -> None:
         return
 
     print("\n[LLM] 生成复盘报告（DeepSeek）...")
-    md = generate_report(indicators, trade_date)
+    md = generate_report(indicators, trade_date, strategy=strategy)
     out = get_settings().output_dir / f"{trade_date}_复盘.md"
     print(f"\n已生成: {out}")
     print(f"（{len(md.splitlines())} 行）")
+
+
+def _cmd_web(args) -> None:
+    from daily_review.web.app import create_app
+
+    app = create_app()
+    url = f"http://{args.host}:{args.port}/"
+    if args.open:
+        webbrowser.open(url)
+    print(f"Web 工作台启动: {url}  （Ctrl+C 退出；仅本机访问）")
+    # 无认证服务：默认只绑 127.0.0.1，勿随意暴露到局域网
+    app.run(host=args.host, port=args.port, debug=False, threaded=True)
 
 
 def _qa_repl(session) -> None:
@@ -227,7 +253,7 @@ def _cmd_dashboard(args) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="daily-review", description="每日复盘 · 数据采集 + 端到端复盘 CLI（v0.7）"
+        prog="daily-review", description="每日复盘 · 数据采集 + 端到端复盘 CLI（v0.8）"
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -251,6 +277,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_rev.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
     p_rev.add_argument(
         "--no-llm", action="store_true", help="只采集+算指标，跳过 LLM 报告"
+    )
+    p_rev.add_argument(
+        "--strategy", default="", help="战法 ID（如 strategy.user-xxx；缺省走通用预案）"
     )
     p_rev.set_defaults(func=_cmd_review)
 
@@ -280,6 +309,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_qa.add_argument("--no-embedding", action="store_true", help="禁用向量检索（纯关键词）")
     p_qa.add_argument("--with-reports", action="store_true", help="把 output/*_复盘.md 也纳入知识库")
     p_qa.set_defaults(func=_cmd_qa)
+
+    p_web = sub.add_parser(
+        "web",
+        help="Web 工作台：战法管理 + 跑复盘看报告/次日预案 + 问答 + 数据看板（Flask）",
+    )
+    p_web.add_argument(
+        "--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1，仅本机；无认证，勿暴露局域网）"
+    )
+    p_web.add_argument("--port", type=int, default=5000, help="监听端口（默认 5000）")
+    p_web.add_argument(
+        "--open", action="store_true", help="启动后用系统默认浏览器打开"
+    )
+    p_web.set_defaults(func=_cmd_web)
 
     return parser
 

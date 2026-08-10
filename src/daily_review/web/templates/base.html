@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}每日复盘工作台{% endblock %}</title>
+<style>
+:root {
+  --bg:#0d1117; --panel:#161b22; --border:#30363d;
+  --ink:#e6edf3; --ink-2:#8b949e; --ink-3:#6e7681;
+  --accent:#2a78d6; --accent-2:#eb6834; --accent-3:#1baf7a;
+  --up:#f5222d; --down:#3fb950; --warn:#d29922; --chip:#1f6feb;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink);
+  font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif; line-height:1.6; }
+a { color:var(--accent); text-decoration:none; }
+nav.top { display:flex; gap:4px; align-items:center; padding:10px 18px;
+  background:var(--panel); border-bottom:1px solid var(--border);
+  position:sticky; top:0; z-index:10; flex-wrap:wrap; }
+nav.top .brand { font-weight:700; margin-right:16px; color:var(--ink); }
+nav.top a { padding:6px 12px; border-radius:8px; color:var(--ink-2); }
+nav.top a:hover, nav.top a.active { background:rgba(31,111,235,.16); color:var(--ink); }
+main { max-width:1080px; margin:0 auto; padding:20px 18px 60px; }
+h1 { font-size:22px; margin:4px 0 10px; }
+h2 { font-size:17px; color:var(--ink-2); margin:18px 0 8px; }
+.panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px 18px; }
+.panel + .panel { margin-top:14px; }
+.btn { display:inline-block; padding:7px 14px; border-radius:8px; border:1px solid var(--border);
+  background:#21262d; color:var(--ink); cursor:pointer; font-size:14px; font-family:inherit; }
+.btn:hover { border-color:var(--chip); }
+.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+.btn.danger { background:transparent; border-color:var(--up); color:var(--up); }
+.btn:disabled { opacity:.5; cursor:not-allowed; }
+input[type=text], select, textarea {
+  background:#0d1117; border:1px solid var(--border); border-radius:8px;
+  color:var(--ink); padding:8px 10px; font-size:14px; font-family:inherit; width:100%; }
+textarea { min-height:280px; line-height:1.55; }
+label { font-size:13px; color:var(--ink-2); display:block; margin:8px 0 4px; }
+.muted { color:var(--ink-3); font-size:13px; }
+.badge { display:inline-block; padding:1px 8px; border-radius:20px; font-size:12px;
+  background:rgba(31,111,235,.16); color:var(--chip); margin-left:6px; }
+.badge.active { background:rgba(27,175,122,.16); color:var(--down); }
+.badge.tracked { background:rgba(110,118,129,.15); color:var(--ink-2); }
+.warn { color:var(--warn); font-size:13px; }
+.err { color:var(--up); font-size:13px; }
+table { width:100%; border-collapse:collapse; font-size:14px; margin:8px 0; }
+th,td { padding:8px 10px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top; }
+th { color:var(--ink-2); font-weight:600; }
+tbody tr:nth-child(even) { background:rgba(128,128,128,.05); }
+pre { background:#0d1117; border:1px solid var(--border); border-radius:8px;
+  padding:12px; overflow-x:auto; }
+code { background:#21262d; border-radius:4px; padding:1px 5px; font-size:13px; }
+pre code { background:transparent; padding:0; }
+blockquote { border-left:3px solid var(--border); margin:10px 0; padding:2px 12px; color:var(--ink-2); }
+hr { border:none; border-top:1px solid var(--border); margin:16px 0; }
+.progress { height:8px; background:#21262d; border-radius:6px; overflow:hidden; }
+.progress > div { height:100%; background:var(--accent); transition:width .3s; }
+.row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+.row > div { min-width:140px; }
+</style>
+</head>
+<body>
+<nav class="top">
+  <a class="brand" href="/">每日复盘</a>
+  <a href="/strategies">战法管理</a>
+  <a href="/review">跑复盘</a>
+  <a href="/qa">问答</a>
+  <a href="/dashboard">数据看板</a>
+</nav>
+<main>
+{% block content %}{% endblock %}
+</main>
+<script>
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+async function api(path, opts){
+  const res = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, opts||{}));
+  let data = {};
+  try { data = await res.json(); } catch(e) {}
+  if(!res.ok){ throw new Error((data&&data.error)||('HTTP '+res.status)); }
+  return data;
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

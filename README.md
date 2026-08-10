@@ -2,7 +2,7 @@
 
 > 基于 Python 的 A 股收盘后复盘工具，聚焦**超短连板**风格：情绪温度、连板梯队、题材运行周期、炸板资金、龙虎榜游资，并为「个人战法 → AI 次日预案」预留扩展位。
 
-**当前阶段**：`v0.7 · 端到端复盘 + 数据看板 + 交互问答已可用`（东财池子/资金流/龙虎榜采集 → 情绪温度/连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；近 10 个交易日趋势数据看板单文件 HTML；**交互问答**：RAG 短线知识库【混合检索 + 持续更新】+ 数据工具 function-calling；个人战法下期）
+**当前阶段**：`v0.8 · Flask 全套工作台 + 个人战法已可用`（东财池子/资金流/龙虎榜采集 → 情绪温度/连板梯队/题材/炸板/游资指标 → DeepSeek LLM 生成 Markdown 复盘报告；近 10 个交易日趋势数据看板单文件 HTML；**交互问答**：RAG 短线知识库【混合检索 + 持续更新】+ 数据工具 function-calling；**Web 工作台**：战法管理（页面上传个人战法，落盘 `data/strategies/` 不入库）+ 页面跑复盘看全文报告与次日预案 + 问答 + 数据看板）
 
 ---
 
@@ -48,9 +48,10 @@
 │   ├── analysis/       #   指标层：emotion（情绪温度）ladder（连板梯队）theme（题材周期）break_flow（炸板资金）lhb（游资分析）
 │   ├── llm/            #   LLM 层：client（DeepSeek，含 function-calling）reporter（模块 prompt 组装报告）
 │   ├── kb/             #   问答知识库：corpus（切块）manifest（增量）embedding（向量可选）index（检索）tools（数据工具）qa（会话）
+│   ├── web/            #   Web 工作台（v0.8，Flask）：app（create_app）routes（页面+API）strategy（战法服务）jobs（后台复盘任务）md（Markdown 渲染）templates/
 │   ├── dashboard.py    #   数据看板：近 N 日趋势图表（单文件 HTML）+ LLM 多日解读
 │   ├── pipeline.py     #   管道：采集 → 指标 → 报告
-│   └── cli.py          #   CLI：kline / realtime / review / dashboard / qa
+│   └── cli.py          #   CLI：kline / realtime / review / dashboard / qa / web
 ├── data/               # 数据缓存 data/{YYYYMMDD}/*.csv（不入库）
 ├── output/             # 复盘报告 output/{YYYYMMDD}_复盘.md、数据看板 output/{YYYYMMDD}_看板.html（不入库）
 ├── models/             # 向量模型 bge-small-zh-v1.5（qa --setup 下载，不入库）
@@ -91,6 +92,9 @@ PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboar
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa --ask "什么是炸板率？" --no-embedding
 PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa --setup   # 安装向量检索依赖并下载 bge 模型
+
+# ★ Web 工作台（v0.8，Flask）：战法管理 + 跑复盘看报告/次日预案 + 问答 + 数据看板
+PYTHONPATH=src "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review web --open   # 默认 127.0.0.1:5000，用系统浏览器打开
 ```
 
 > **LLM 密钥**：首次使用前在项目根目录 `.env` 写入 `DEEPSEEK_API_KEY=sk-xxx`（`.env` 已被 gitignore，不入库）。数据自动落盘到 `data/{YYYYMMDD}/`，报告输出到 `output/{YYYYMMDD}_复盘.md`，数据看板输出到 `output/{YYYYMMDD}_看板.html`。

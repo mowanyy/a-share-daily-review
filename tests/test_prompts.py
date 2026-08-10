@@ -27,6 +27,22 @@ def test_prompt_ids_unique():
     assert len(ids) == len(set(ids)), f"存在重复 ID: {ids}"
 
 
+def test_author_and_applies_to_parsed(tmp_path):
+    """Prompt 扩展字段 author/applies_to 从 front-matter 解析。"""
+    from daily_review.prompts import load_prompt_file
+
+    p = tmp_path / "x.md"
+    p.write_text(
+        "---\nid: x.a\nname: X\nrole: report\nstatus: draft\n"
+        "author: 用户A\napplies_to: 修复期\n---\n\n正文",
+        encoding="utf-8",
+    )
+    pr = load_prompt_file(p)
+    assert pr is not None
+    assert pr.author == "用户A"
+    assert pr.applies_to == "修复期"
+
+
 def test_index_md_entries_match_files():
     """INDEX.md 中登记的 [文件](相对路径) 必须真实存在。"""
     index_path = PROJECT_ROOT / "prompts" / "INDEX.md"

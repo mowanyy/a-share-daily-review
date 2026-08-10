@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}跑复盘 · 每日复盘{% endblock %}
+{% block content %}
+<h1>跑复盘</h1>
+<div class="panel">
+  <div class="row">
+    <div><label>交易日</label><input type="text" id="date" placeholder="YYYYMMDD"></div>
+    <div style="flex:2"><label>战法（驱动次日预案）</label><select id="strategy"><option value="">通用预案（不指定战法）</option></select></div>
+    <div><label>无 LLM（仅采集+指标）</label><input type="checkbox" id="noLlm" style="width:auto"></div>
+    <button class="btn primary" id="btnStart">开始复盘</button>
+  </div>
+  <div class="muted" id="hint"></div>
+</div>
+
+<div class="panel" id="prog" hidden>
+  <div class="row" style="justify-content:space-between">
+    <strong id="step"></strong><span class="muted" id="pct"></span>
+  </div>
+  <div class="progress" style="margin-top:8px"><div id="bar" style="width:0%"></div></div>
+  <pre id="logs" hidden></pre>
+</div>
+
+<div class="panel" id="result" hidden>
+  <div class="row" style="justify-content:space-between">
+    <h2 style="margin:0">复盘报告 <span class="muted" id="resultMeta"></span></h2>
+    <div>
+      <button class="btn primary" id="btnFull">全文</button>
+      <button class="btn" id="btnPlan">只看次日预案</button>
+    </div>
+  </div>
+  <div id="report" style="margin-top:8px"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var pollTimer = null;
+var curJob = '';
+var reportHtml = '';
+var planHtml = '';
+
+function loadDate(){
+  api('/api/review/recent_date').then(function(d){
+    document.getElementById('date').value = d.date;
+  }).catch(function(){});
+}
+function loadStrategies(){
+  api('/api/strategies').then(function(d){
+    var sel = document.getElementById('strategy');
+    var items = (d.strategies || []).slice().sort(function(a,b){
+      if(a.status !== b.status) return a.status === 'active' ? -1 : 1;
+      return a.name < b.name ? -1 : 1;
+    });
+    items.forEach(function(s){
+      var o = document.createElement('option');
+      o.value = s.id;
+      o.textContent = (s.status === 'active' ? '[启用] ' : '[草稿] ') + s.name
+        + (s.applies_to ? '（' + s.applies_to + '）' : '');
+      sel.appendChild(o);
+    });
+  }).catch(function(){});
+}
+function start(){
+  var date = document.getElementById('date').value.trim();
+  if(!/^\d{8}$/.test(date)){ alert('交易日需为 YYYYMMDD'); return; }
+  var payload = {
+    trade_date: date,
+    strategy_id: document.getElementById('strategy').value,
+    no_llm: document.getElementById('noLlm').checked
+  };
+  document.getElementById('btnStart').disabled = true;
+  document.getElementById('prog').hidden = false;
+  document.getElementById('result').hidden = true;
+  document.getElementById('logs').hidden = true;
+  document.getElementById('bar').style.width = '0%';
+  api('/api/review/start', {method:'POST', body:JSON.stringify(payload)})
+    .then(function(d){ curJob = d.job_id; poll(); })
+    .catch(function(e){ alert(e.message); document.getElementById('btnStart').disabled = false; });
+}
+function poll(){
+  api('/api/review/status/' + curJob).then(function(j){
+    document.getElementById('step').textContent = j.step;
+    document.getElementById('pct').textContent = j.progress + '%';
+    document.getElementById('bar').style.width = j.progress + '%';
+    if(j.logs && j.logs.length){
+      var lg = document.getElementById('logs');
+      lg.hidden = false;
+      lg.textContent = j.logs.join('\n');
+    }
+    if(j.status === 'done'){ showResult(j); return; }
+    if(j.status === 'error'){
+      var lg = document.getElementById('logs');
+      lg.hidden = false;
+      lg.textContent = (j.logs || []).join('\n') + '\n失败：' + j.error;
+      document.getElementById('btnStart').disabled = false;
+      return;
+    }
+    setTimeout(poll, 1500);
+  }).catch(function(e){
+    alert(e.message);
+    document.getElementById('btnStart').disabled = false;
+  });
+}
+function showResult(j){
+  reportHtml = j.report_html || '';
+  planHtml = j.plan_html || '';
+  document.getElementById('resultMeta').textContent = j.trade_date
+    + (j.strategy_name ? ' · ' + j.strategy_name : '')
+    + (j.no_llm ? ' · 无 LLM' : '');
+  document.getElementById('report').innerHTML = reportHtml;
+  document.getElementById('result').hidden = false;
+  document.getElementById('btnFull').classList.add('primary');
+  document.getElementById('btnPlan').classList.remove('primary');
+  document.getElementById('btnStart').disabled = false;
+}
+document.getElementById('btnFull').onclick = function(){
+  document.getElementById('report').innerHTML = reportHtml;
+  this.classList.add('primary');
+  document.getElementById('btnPlan').classList.remove('primary');
+};
+document.getElementById('btnPlan').onclick = function(){
+  document.getElementById('report').innerHTML = planHtml
+    || '<span class="muted">（该报告不含「七、次日预案」章节）</span>';
+  this.classList.add('primary');
+  document.getElementById('btnFull').classList.remove('primary');
+};
+document.getElementById('btnStart').onclick = start;
+loadDate();
+loadStrategies();
+</script>
+{% endblock %}

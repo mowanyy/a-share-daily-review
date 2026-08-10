@@ -20,7 +20,7 @@ import pandas as pd
 
 from daily_review.config import get_settings
 from daily_review.llm.client import LLMError, chat
-from daily_review.prompts import get_prompt
+from daily_review.prompts import Prompt, get_prompt
 
 _WEEKDAYS = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
 
@@ -326,6 +326,7 @@ def _module_chapter(
     prompt_id: str,
     title: str,
     payload: dict,
+    indicators: dict,
     api_key: str,
     fallback,
     *,
@@ -334,12 +335,13 @@ def _module_chapter(
 ) -> str:
     """单模块 LLM 生成章节；失败返回兜底数据表（附注失败原因）。
 
+    indicators: 全量指标（fallback 生成数据表需要）。
     forced: 程序核算的确定性内容（如总览一行），以指令形式注入，LLM 必须原样采用。
     extra_rule: 追加的输出纪律（如「已核算表格不得重算」）。
     """
     p = get_prompt(prompt_id)
     if p is None:
-        return f"## {title}\n\n（模块 prompt {prompt_id} 未找到，以下为数据表）\n\n{fallback()}"
+        return f"## {title}\n\n（模块 prompt {prompt_id} 未找到，以下为数据表）\n\n{fallback(indicators)}"
     rules = "只依据输入数据输出，禁止编造。" + (f"\n{extra_rule}" if extra_rule else "")
     forced_hint = (
         f"\n\n【程序核算结果，输出时必须原样采用，不得改写或另造数字】\n{forced}"
@@ -360,7 +362,7 @@ def _module_chapter(
     try:
         body = chat(messages, api_key=api_key)
     except LLMError as exc:
-        body = f"（模块 {prompt_id} 生成失败：{exc}。以下为数据表兜底）\n\n{fallback()}"
+        body = f"（模块 {prompt_id} 生成失败：{exc}。以下为数据表兜底）\n\n{fallback(indicators)}"
     # LLM 偶把章节标题也回显（尽管要求只输出正文）→ 去重，防组装出重复标题
     return f"## {title}\n\n{_strip_section_heading(body, title)}"
 
@@ -440,6 +442,76 @@ def _build_digest(ind: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------- 次日预案（可战法驱动）
+
+def _cap_text(text: str, limit: int = 6000) -> str:
+    """截断超长正文（防御：用户上传的战法可能很长），保留可读性。"""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + f"\n\n……（正文过长，已截断至 {limit} 字）"
+
+
+def _plan_rule(plan: Prompt | None, strategy: Prompt | None) -> str:
+    """次日预案执行规则一句话：指定战法 → 只执行该战法；未指定 → 通用预案。"""
+    if strategy is not None:
+        return f"已指定战法「{strategy.name}」：只执行该战法，不自行混合其他战法逻辑。"
+    if plan is not None:
+        return "未指定战法 → 通用预案：仅给方向与风险，不给具体买卖点。"
+    return ""
+
+
+def _plan_system(
+    analyst: Prompt | None,
+    plan: Prompt | None,
+    strategy: Prompt | None,
+    plan_rule: str,
+) -> str:
+    """次日预案 system 消息：分析师角色 +（战法时）module.plan 执行规则 + 战法正文。"""
+    if strategy is None:
+        # 与原实现逐字节一致（向后兼容）
+        return (
+            f"{analyst.body if analyst else '你是 A 股超短连板复盘分析师。'}\n\n{plan_rule}\n"
+            "预案是「条件触发」式的，不是确定性预测；每个建议注明依据（当日哪个数据）。"
+        )
+    parts = [analyst.body if analyst else "你是 A 股超短连板复盘分析师。"]
+    if plan is not None:
+        parts.append(plan.body)  # module.plan 的任务/输出结构/执行规则/输出纪律
+    meta = f"适用 {strategy.applies_to}" if strategy.applies_to else "适用情绪阶段见正文"
+    parts.append(
+        f"【用户指定的战法：{strategy.name}（v{strategy.version or '0.1.0'}，{meta}）】\n"
+        f"{_cap_text(strategy.body)}"
+    )
+    parts.append(plan_rule)
+    parts.append("预案是「条件触发」式的，不是确定性预测；每个建议注明依据（当日哪个数据）。")
+    return "\n\n".join(parts)
+
+
+def _plan_user(
+    trade_date: str,
+    indicators: dict,
+    strategy: Prompt | None,
+    emo_hint: str = "",
+) -> str:
+    """次日预案 user 消息：日期 + 紧凑摘要 + 输出指令（战法驱动或通用）。"""
+    if strategy is not None:
+        instr = (
+            f"请按战法「{strategy.name}」的触发条件输出「## {PLAN_SECTION}」的正文："
+            "1 段次日核心观点 + 1–3 个关注方向（题材+具体对象+符合战法的触发/买入条件）"
+            "+ 晋级/断板两情形梯队预案 + 风险警示（按战法反例逐条核对，数据不足明说缺什么）。"
+        )
+    else:
+        instr = (
+            f"请输出「## {PLAN_SECTION}」的正文：1 段次日核心观点 + 1–3 个关注方向（题材+具体对象+观察信号）"
+            "+ 风险警示。全部用「若…则…」条件句式；未指定战法，只给方向与风险，不给具体买卖点。"
+        )
+    return (
+        f"复盘日期：{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}（{_weekday_cn(trade_date)}）\n"
+        f"当日结构化摘要（JSON）：\n```json\n{_compact_json(_build_digest(indicators))}\n```\n\n"
+        f"{instr}{emo_hint}"
+        "只输出正文，不要标题、不要编造数字。"
+    )
+
+
 # ---------------------------------------------------------------- 主入口
 
 def generate_report(
@@ -448,11 +520,14 @@ def generate_report(
     *,
     api_key: str | None = None,
     out_path: str | Path | None = None,
+    strategy: Prompt | None = None,
 ) -> str:
     """生成完整复盘 Markdown 并落盘，返回文本。
 
     indicators: 管道产出 {ladder, themes, break, lhb, emotion, zt_pool}（详见 pipeline.compute）。
     out_path 缺省：output/{trade_date}_复盘.md（get_settings().output_dir 下）。
+    strategy: 用户指定战法（Prompt，role=strategy）；缺省 None → 通用预案（与原行为一致）。
+    传入后「七、次日预案」按 module.plan 执行规则 + 战法正文驱动。
 
     组装策略：五个模块章节（二~六）由模块调用生成后**代码直接拼接**；
     仅「一、总览」「七、次日预案」走 LLM（喂紧凑摘要，防超 token 截断丢章节）。
@@ -466,7 +541,6 @@ def generate_report(
 
     analyst = get_prompt("system.analyst")
     plan = get_prompt("module.plan")
-    plan_rule = "未指定战法 → 通用预案：仅给方向与风险，不给具体买卖点。" if plan else ""
     title = f"# 📊 {trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]} 复盘（{_weekday_cn(trade_date)}）"
 
     # 1. 各模块章节（LLM，失败用数据表兜底）
@@ -501,7 +575,7 @@ def generate_report(
                     "情绪周期（冰点期/修复期/高潮期/退潮期，带「期」）是市场级阶段，题材运行阶段（启动/发酵/高潮/退潮，裸词）是题材级，本章只用带「期」的市场级阶段词。"
                 ),
             }
-        chapters.append(_module_chapter(prompt_id, title_cn, payload_fn(indicators), api_key, fallback_fn, **kw))
+        chapters.append(_module_chapter(prompt_id, title_cn, payload_fn(indicators), indicators, api_key, fallback_fn, **kw))
 
     # 2. 总览（LLM，喂核心数据 + 情绪温度强制引用）
     emo = indicators.get("emotion") or {}
@@ -532,7 +606,10 @@ def generate_report(
     except LLMError as exc:
         overview = f"核心数据：{_compact_json(_headline(indicators))}\n\n（总览生成失败：{exc}）"
 
-    # 3. 次日预案（LLM，喂紧凑摘要 + 情绪温度基调）
+    # 3. 次日预案（LLM，喂紧凑摘要 + 情绪温度基调；可指定战法驱动）
+    if strategy is not None and strategy.role != "strategy":
+        strategy = None  # 防御：非战法 prompt 一律按未指定处理
+    plan_rule = _plan_rule(plan, strategy)
     emo_hint = ""
     if emo.get("available"):
         emo_hint = (
@@ -541,24 +618,8 @@ def generate_report(
         )
     plan_body = f"（预案生成失败。{plan_rule}）"
     messages = [
-        {
-            "role": "system",
-            "content": (
-                f"{analyst.body if analyst else '你是 A 股超短连板复盘分析师。'}\n\n{plan_rule}\n"
-                "预案是「条件触发」式的，不是确定性预测；每个建议注明依据（当日哪个数据）。"
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"复盘日期：{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}（{_weekday_cn(trade_date)}）\n"
-                f"当日结构化摘要（JSON）：\n```json\n{_compact_json(_build_digest(indicators))}\n```\n\n"
-                f"请输出「## {PLAN_SECTION}」的正文：1 段次日核心观点 + 1–3 个关注方向（题材+具体对象+观察信号）"
-                f"+ 风险警示。全部用「若…则…」条件句式；未指定战法，只给方向与风险，不给具体买卖点。"
-                f"{emo_hint}"
-                f"只输出正文，不要标题、不要编造数字。"
-            ),
-        },
+        {"role": "system", "content": _plan_system(analyst, plan, strategy, plan_rule)},
+        {"role": "user", "content": _plan_user(trade_date, indicators, strategy, emo_hint)},
     ]
     try:
         plan_body = chat(messages, api_key=api_key, max_tokens=1500)

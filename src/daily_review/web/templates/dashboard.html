@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}数据看板 · 每日复盘{% endblock %}
+{% block content %}
+<h1>数据看板</h1>
+<div class="panel">
+  <div class="row">
+    <div><label>交易日</label><input type="text" id="dDate" placeholder="YYYYMMDD"></div>
+    <div><label>近 N 个交易日</label><input type="text" id="dDays" value="10"></div>
+    <div><label>LLM 多日解读</label><input type="checkbox" id="dLlm" style="width:auto"></div>
+    <button class="btn primary" id="btnDash">生成看板</button>
+  </div>
+  <div class="muted">近 N 日趋势图表（纯 JS + 内联 SVG，零外链）。LLM 解读需要 DEEPSEEK_API_KEY，未配置时看板照常渲染。</div>
+</div>
+<iframe id="frame" title="数据看板" style="width:100%;height:920px;border:1px solid var(--border);border-radius:10px;background:var(--bg)"></iframe>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function frameSrc(){
+  var date = document.getElementById('dDate').value.trim();
+  var days = document.getElementById('dDays').value.trim() || '10';
+  var noLlm = document.getElementById('dLlm').checked ? '0' : '1';
+  var q = 'no_llm=' + noLlm + '&days=' + encodeURIComponent(days);
+  if(date){ q += '&date=' + encodeURIComponent(date); }
+  return '/api/dashboard/view?' + q;
+}
+function loadDash(){
+  var f = document.getElementById('frame');
+  f.src = frameSrc();
+}
+document.getElementById('btnDash').onclick = loadDash;
+api('/api/review/recent_date')
+  .then(function(d){ document.getElementById('dDate').value = d.date; loadDash(); })
+  .catch(function(){});
+</script>
+{% endblock %}

@@ -1,7 +1,8 @@
 """知识库语料：源发现 + Markdown 切块。
 
 源：prompts/**/*.md（跳过 INDEX.md）+ docs/{需求分析,数据结构,战法规范}.md +
-    knowledge/**/*.md（用户持续更新的知识目录）+ 可选 output/*_复盘.md（带日期标签）。
+    knowledge/**/*.md（用户持续更新的知识目录）+ data/strategies/**/*.md（用户上传的个人战法）+
+    可选 output/*_复盘.md（带日期标签）。
 
 切块规则：
 - 按 `##`/`###` 标题切分，章节路径作为 section（可展示出处）
@@ -78,6 +79,11 @@ def discover_sources(root: Path | None = None, *, include_output_reports: bool =
     kb_dir = root / "knowledge"
     if kb_dir.exists():
         paths.extend(sorted(kb_dir.rglob("*.md")))
+
+    # 用户上传的个人战法（data/strategies/，gitignored）——并入知识库，QA 可检索
+    strat_dir = root / "data" / "strategies"
+    if strat_dir.exists():
+        paths.extend(sorted(strat_dir.rglob("*.md")))
 
     if include_output_reports:
         out_dir = root / "output"

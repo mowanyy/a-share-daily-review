@@ -29,6 +29,8 @@ class Prompt:
     output: str = ""
     path: Path | None = None
     body: str = ""
+    author: str = ""
+    applies_to: str = ""
 
     @property
     def is_active(self) -> bool:
@@ -80,6 +82,8 @@ def load_prompt_file(path: Path) -> Prompt | None:
         output=str(meta.get("output", "")),
         path=path,
         body=body,
+        author=str(meta.get("author", "")),
+        applies_to=str(meta.get("applies_to", "")),
     )
 
 

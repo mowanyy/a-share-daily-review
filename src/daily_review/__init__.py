@@ -13,6 +13,10 @@ v0.6：新增数据看板——近 10 个交易日趋势图表（自包含单文
 v0.7：新增交互问答——RAG 短线知识库（混合检索：sklearn 关键词 n-gram + 可选 bge-small-zh
       向量 + RRF 融合；源= prompts/** + docs/{3 份} + knowledge/** 自动收录、sha256 增量重建，
       持续更新）+ 6 个数据工具 function-calling（tool.datatools 契约落地），qa CLI 子命令。
+v0.8：新增 Web 工作台（Flask）——战法管理（页面上传/编辑/启停，落盘 gitignored
+      data/strategies/，不入项目）+ 跑复盘看七章报告与次日预案（可指定个人战法驱动，
+      后台线程单飞任务）+ 问答 QA + 数据看板；个人战法 → AI 次日预案落地（module.plan
+      注入战法正文，web CLI 子命令，review --strategy <id>）。
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
