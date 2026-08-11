@@ -327,7 +327,9 @@ def _fetch_moneyflow_fflow(codes: list[str], trade_date: str, name_map: dict) ->
 def fetch_moneyflow(codes: list[str], trade_date: str, name_map: dict | None = None) -> pd.DataFrame:
     """取一组股票在指定交易日的主力/超大单/大单净流入。
 
-    - 当日：clist 批量（1 请求，delay 主机兜底，可靠）；
+    - 当日：clist 批量（1 请求，delay 主机兜底）**只返回按主力净流入 Top-100**
+      （东财 clist 每页固定 100 行，实测 pz=6000 亦如此）——对 clist 拿不到的
+      请求代码逐个走单股 fflow 补齐，避免「部分票没数据」；
     - 历史日期：单股 fflow（push2his 全历史）。
     """
     name_map = name_map or {}
@@ -336,9 +338,15 @@ def fetch_moneyflow(codes: list[str], trade_date: str, name_map: dict | None = N
         try:
             df = fetch_moneyflow_clist(codes, trade_date)
             if not df.empty:
+                found = {str(c).zfill(6) for c in df["code"]}
+                missing = [c for c in codes if str(c).zfill(6) not in found]
+                if missing:
+                    df_ff = _fetch_moneyflow_fflow(missing, trade_date, name_map)
+                    if not df_ff.empty:
+                        df = pd.concat([df, df_ff], ignore_index=True)
                 return df
         except Exception:
-            pass  # 回退 fflow
+            pass  # clist 整体失败 → 全部回退 fflow
     return _fetch_moneyflow_fflow(codes, trade_date, name_map)
 
 

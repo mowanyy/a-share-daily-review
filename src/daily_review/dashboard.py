@@ -258,6 +258,9 @@ svg.chart { width: 100%; height: auto; display: block; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border);
   white-space: nowrap; }
+/* 表格容器横向溢出兜底：内容超宽时出现横向滚动条而非裁掉文字
+   （连板梯队「炸板/弱封」/题材/炸板/龙虎榜行数或单元格可随涨停家数暴涨） */
+#ladder, #themes, #break, #lhb { overflow-x: auto; }
 th { color: var(--ink-2); font-weight: 600; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tbody tr:nth-child(even) { background: rgba(128,128,128,.05); }
@@ -323,6 +326,14 @@ function fmtMoney(v) {
   if (a >= 1e8) return (v / 1e8).toFixed(2) + "亿";
   if (a >= 1e4) return Math.round(v / 1e4) + "万";
   return Math.round(v).toString();
+}
+/* 弱封股列表截断：最多显示前 5 只，超出补「等 N 只」，避免涨停家数多时撑破表格。 */
+function weakCell(list) {
+  const arr = list || [];
+  if (!arr.length) return "—";
+  const shown = arr.slice(0, 5).join(" / ");
+  const extra = arr.length - 5;
+  return esc(shown) + (extra > 0 ? ' <span class="muted">等 ' + extra + " 只</span>" : "");
 }
 function pct(v, d) { return v === null || v === undefined ? "—" : (v * 100).toFixed(d ?? 1) + "%"; }
 function pctPct(v, d) { return v === null || v === undefined ? "—" : v.toFixed(d ?? 1) + "%"; } /* 值已是百分数（东财 zdp/CHANGE_RATE），不再 ×100 */
@@ -582,7 +593,7 @@ function renderLadder() {
   const rows = ld.ladder.map(r =>
     "<tr><td>" + esc(r.height) + "板</td><td class='num'>" + r.count + "</td>"
     + "<td>" + esc((r.stocks || []).join(" / ") || "—") + "</td>"
-    + "<td>" + esc((r.weak || []).join(" / ") || "—") + "</td></tr>").join("");
+    + "<td>" + weakCell(r.weak) + "</td></tr>").join("");
   const prom = Object.keys(ld.promotion || {}).map(k =>
     esc(k) + " " + pct(ld.promotion[k])).join("  ");
   el.innerHTML = "<table><thead><tr><th>高度</th><th class='num'>数量</th>"

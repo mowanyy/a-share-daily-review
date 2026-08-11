@@ -241,6 +241,24 @@ class TestRenderHtml:
         assert "const DATA =" in html_text
         assert "数据不足" in html_text  # JS 渲染占位逻辑存在
 
+    def test_weak_cell_truncation_guard(self):
+        """弱封列溢出修复：截断 helper + renderLadder 引用 + 表格容器 overflow 兜底都在单文件里。"""
+        html_text = render_html(_small_payload(), llm_text="")
+        assert "function weakCell(list)" in html_text
+        assert "arr.slice(0, 5).join" in html_text            # 最多显示前 5 只
+        assert "' <span class=\"muted\">等 '" in html_text    # 超出补「等 N 只」
+        assert "weakCell(r.weak)" in html_text                 # renderLadder 弱封列走截断
+        assert "#ladder, #themes, #break, #lhb" in html_text   # 表格容器横向溢出兜底
+        assert "overflow-x: auto" in html_text
+
+    def test_dashboard_template_iframe_resize(self):
+        """web 端 iframe 高度自适应：窗口缩放后重新测高，底部表格行不再被裁/留空白。"""
+        import pathlib
+        tpl = (pathlib.Path(__file__).resolve().parents[1]
+               / "src" / "daily_review" / "web" / "templates" / "dashboard.html")
+        text = tpl.read_text(encoding="utf-8")
+        assert "window.addEventListener('resize', function(){ fitFrame(); });" in text
+
 
 class TestInterpretation:
     def test_chat_success(self, monkeypatch):

@@ -38,6 +38,9 @@ function fitFrame(){
     frame.style.height = (h > 100 ? h : 100) + 'px';
   }catch(e){}
 }
+/* 窗口缩放/内容重排后重新测高：看板 SVG 随宽度缩放、表格随行数增高，高度会变化，
+   单靠 onload 三次定时测高不够（无 resize 监听时底部表格行会被裁/留空白）。 */
+window.addEventListener('resize', function(){ fitFrame(); });
 function loadDash(){
   loading.style.display = '';
   frame.style.display = 'none';
