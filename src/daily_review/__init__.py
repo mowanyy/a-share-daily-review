@@ -42,6 +42,14 @@ v0.12：修复看板「涨停家数多时文字无法显示」+ 资金流缺失�
       ② 当日资金流根因=东财 clist 每页固定只返回 100 行（实测 pz=6000 亦然，只拿到主力
       净流入 Top-100）→ fetch_moneyflow 改为 clist 部分结果 + 对缺失炸板股代码逐个 fflow
       单股补齐（实测 17/17 全有数据）；DDX 日线/分时实测无公开稳定接口，本次只修日线补齐。
+v0.12.1：LLM 后端切换商汤 SenseNova（主）+ 官方 DeepSeek 自动兜底——新 key 属商汤
+      Token Plan（token.sensenova.cn/v1，api.sensenova.cn 404），模型 deepseek-v4-flash
+      （仅此名可用）是推理模型（回包带 reasoning_content，思考先占 token）且免费额度
+      限流（实测 429）；四个小预算调用点 max_tokens 500/600/500/1500 → 1500/1200/1200/2500
+      给思考留预算；chat() 空 content 报错区分「推理模型思考占满预算」；LLMError 增
+      retryable 标记（429/5xx/网络=可重试），chat/chat_tools 经 _post_fallback 在可重试
+      失败时自动用兜底后端（DEEPSEEK_FALLBACK_API_KEY / LLM_FALLBACK_BASE_URL /
+      LLM_FALLBACK_MODEL，官方 DeepSeek）重试一次。
 """
 
-__version__ = "0.12.0"
+__version__ = "0.12.1"

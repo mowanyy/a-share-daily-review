@@ -8,6 +8,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.12.1`：**LLM 后端=商汤 SenseNova（主，DeepSeek V4 Flash 推理模型）+ 官方 DeepSeek 自动兜底**——新 API key 属商汤 Token Plan 平台，实测 `token.sensenova.cn` 为有效接口（`api.sensenova.cn` 404 路由不存在）。`.env` 主三件套：`DEEPSEEK_API_KEY`（新）/ `LLM_BASE_URL=https://token.sensenova.cn/v1` / `LLM_MODEL=deepseek-v4-flash`（仅此模型名可用，`deepseek-v4` 报 model not found）；**兜底三件套**：`DEEPSEEK_FALLBACK_API_KEY`（官方旧 key）/ `LLM_FALLBACK_BASE_URL=https://api.deepseek.com` / `LLM_FALLBACK_MODEL=deepseek-chat`。该模型是**推理模型**（回包带 `reasoning_content`，思考先占 token）且 **Token Plan 免费额度有调用频率上限（实测 429）** → 四个小预算调用点 `max_tokens` 由 500/600/500/1500 上调至 1500/1200/1200/2500 给思考留预算（热点/总览/看板/预案）；`chat()` 空 content 报错区分「推理模型思考占满预算」（提示调大 max_tokens / 换非推理模型），不再笼统「返回为空」；function-calling 守卫仅拦含 `reasoner` 的模型，`deepseek-v4-flash` 不误拦，QA 工具回放已含 `reasoning_content`。**自动兜底**：`LLMError` 增 `retryable` 标记（429/5xx/网络错误=可重试），`chat`/`chat_tools` 经 `_post_fallback` 在可重试失败时自动用兜底后端重试一次（无兜底 key 或兜底同主则原样抛出；兜底再失败如实上报）。换平台只改 `.env` 六键，不动代码。
+
 `v0.12.0`：**修复看板「涨停家数多时文字无法显示」+ 资金流缺失补齐**——① 连板梯队「炸板/弱封」单元格把无上限弱封股列表 `join(" / ")` 拼进一格（`white-space:nowrap` + 无 overflow 兜底）→ 表格被撑破容器宽度、文字横向溢出被裁：弱封列改为**截断显示前 5 只 +「等 N 只」**，`#ladder/#themes/#break/#lhb` 四个表格容器加 `overflow-x:auto` 兜底；web 端 iframe `fitFrame` 加 `window resize` 重测（窗口缩放后底部行不再被裁/留空白）。② 当日资金流根因=东财 clist 接口**每页固定只返回 100 行**（实测 `pz=6000` 亦然，只拿到按主力净流入 Top-100）→ `fetch_moneyflow` 改为 clist 部分结果 + **对缺失炸板股代码逐个 fflow 单股补齐**（实测 17/17 全有数据）；DDX 日线/分时实测无公开稳定接口，本次只修日线补齐。
 
 `v0.11.0`：**多模型协作热点复盘已可用**——撰写复盘时由独立**热点模型（模型 B）**（`module.hotspot` prompt，`HOTSPOT_MODEL` 可选、默认回落主模型）基于已采集概念板块行情+当日题材提炼当日 2-4 条热点主线简报，注入主分析师（模型 A）的「一总览/四题材/七次日预案」三章节撰写，让复盘贴合当天热点；概念板块行情采集扩展领涨股字段（f128/f140/f136 实测），pipeline 新增**仅当日**概念板块可选块（clist 实时快照，历史日期硬守卫不采集），不新增报告章节、`generate_report` 签名不变，热点调用失败降级确定性 Top-N，无概念数据逐字节保持旧行为。
@@ -16,9 +18,9 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 **Web 数据看板性能修复（v0.10）**：`/api/dashboard/view` 此前每次请求都重新联网采集约 2 分钟 → iframe 空白「不显示」。现采用三层——① 进程内 `DashboardCache`（按 交易日期+N+no_llm 缓存、最多 16 条逐出最旧、**只缓存成功**）；② 复用已生成 `output/{date}_看板.html`（仅默认 10 日）；③ 采集/指标失败 → 自包含错误兜底页（HTTP 200 进 iframe，不裸 500）。保鲜规则：历史日期定稿常新；今日盘中 10 分钟 TTL；今日 15:00 后须 15:00 后生成才有效（`_dashboard_cache_is_fresh`，`_clock()` 可测）。看板内容增强放一页：新增「近 N 日趋势摘要表」「情绪温度成分拆解」面板，iframe 随内容自适应高度，LLM 解读配置 key 默认开启，review 页新增「查看该日看板」跳转，`/api/config/llm` 探测 key。
 
-**多模型协作（v0.11）**：`generate_report` 在模块循环前先做一次独立 LLM 调用（模型 B，`module.hotspot`，`max_tokens=500`）提炼当日热点简报，注入 一总览/四题材/七预案 三章节（措辞块「【另一模型提炼的当日热点（…）】」，须引用并校验、不得编造）。热点模型名用环境变量 `HOTSPOT_MODEL`（如 `deepseek-reasoner`）切换，默认空回落 `llm_model`。概念板块数据仅当日采集（`_fetch_concept_boards_block` 非今日硬守卫），不入报告章节、只供热点简报。
+**多模型协作（v0.11）**：`generate_report` 在模块循环前先做一次独立 LLM 调用（模型 B，`module.hotspot`，`max_tokens=1500`）提炼当日热点简报，注入 一总览/四题材/七预案 三章节（措辞块「【另一模型提炼的当日热点（…）】」，须引用并校验、不得编造）。热点模型名用环境变量 `HOTSPOT_MODEL`（如 `deepseek-reasoner`）切换，默认空回落 `llm_model`。概念板块数据仅当日采集（`_fetch_concept_boards_block` 非今日硬守卫），不入报告章节、只供热点简报。
 
-**LLM 密钥**：`.env`（不入库，已 gitignore）里 `DEEPSEEK_API_KEY=sk-xxx`（可选 `HOTSPOT_MODEL`）；缺 key 时 `review --no-llm` / `dashboard --no-llm` 仍可跑通数据+指标+看板。
+**LLM 密钥**：`.env`（不入库，已 gitignore）。**当前后端=商汤 SenseNova 主用 + 官方 DeepSeek 自动兜底**：主 `DEEPSEEK_API_KEY` / `LLM_BASE_URL=https://token.sensenova.cn/v1` / `LLM_MODEL=deepseek-v4-flash`（推理模型、Token Plan 免费额度有频率上限 429），兜底 `DEEPSEEK_FALLBACK_API_KEY` / `LLM_FALLBACK_BASE_URL=https://api.deepseek.com` / `LLM_FALLBACK_MODEL=deepseek-chat`（429/5xx/网络失败自动切换，`client._post_fallback`）。换平台只改 `.env` 六键不改代码。缺 key 时 `review --no-llm` / `dashboard --no-llm` 仍可跑通数据+指标+看板。
 
 已可用命令（在项目根目录，`PYTHONPATH=src`）：
 ```bash

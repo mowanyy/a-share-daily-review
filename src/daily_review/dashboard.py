@@ -197,7 +197,7 @@ def _dashboard_interpretation(indicators: dict, trend: list[dict], api_key: str 
         },
     ]
     try:
-        return chat(messages, api_key=api_key, max_tokens=500).strip()
+        return chat(messages, api_key=api_key, max_tokens=1200).strip()  # 推理模型预留 reasoning 预算
     except LLMError:
         return ""
 

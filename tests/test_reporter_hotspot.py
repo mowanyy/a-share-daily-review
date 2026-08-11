@@ -81,7 +81,7 @@ class TestHotspotBrief:
         monkeypatch.setattr(reporter, "chat", fake_chat)
         assert _hotspot_brief(_indicators_with_hotspot(), "k") == "热点摘要"
         assert rec["kw"].get("model") is None
-        assert rec["kw"]["max_tokens"] == 500
+        assert rec["kw"]["max_tokens"] == 1500  # v0.12.1：推理模型预留 reasoning 预算
 
     def test_calls_chat_with_hotspot_model(self, monkeypatch):
         from daily_review.llm import reporter

@@ -15,7 +15,15 @@ from daily_review.config import get_settings
 
 
 class LLMError(RuntimeError):
-    """LLM 调用错误（缺 key / 鉴权 / 限流 / 网络），错误信息可直接展示给用户。"""
+    """LLM 调用错误（缺 key / 鉴权 / 限流 / 网络），错误信息可直接展示给用户。
+
+    retryable=True 表示换个后端（兜底提供商）重试可能成功（限流/5xx/网络抖动）；
+    鉴权/参数类错误（401/400/403）与数据类错误保持 retryable=False。
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclass
@@ -71,20 +79,62 @@ def _post(
     try:
         resp = requests.post(f"{base_url}/chat/completions", headers=headers, json=payload, timeout=timeout)
     except requests.RequestException as exc:
-        raise LLMError(f"网络请求失败: {exc}") from exc
+        raise LLMError(f"网络请求失败: {exc}", retryable=True) from exc
 
     if resp.status_code == 401:
         raise LLMError("DeepSeek API Key 无效（401），请检查 .env 中的 DEEPSEEK_API_KEY")
     if resp.status_code == 429:
-        raise LLMError("DeepSeek 限流（429），请稍后重试")
+        raise LLMError("DeepSeek 限流（429），请稍后重试", retryable=True)
     if resp.status_code != 200:
-        raise LLMError(f"DeepSeek 返回异常: HTTP {resp.status_code} {resp.text[:300]}")
+        # 5xx（服务端/网关错误）可换后端重试；4xx 属请求/配置问题，不兜底
+        raise LLMError(
+            f"DeepSeek 返回异常: HTTP {resp.status_code} {resp.text[:300]}",
+            retryable=resp.status_code >= 500,
+        )
 
     data = resp.json()
     try:
         return data["choices"][0]
     except (KeyError, IndexError, TypeError) as exc:
         raise LLMError(f"DeepSeek 返回格式异常: {str(data)[:300]}") from exc
+
+
+def _post_fallback(
+    messages: list[dict],
+    *,
+    api_key: str,
+    model: str,
+    base_url: str,
+    temperature: float,
+    max_tokens: int,
+    timeout: float,
+    tools: list[dict] | None = None,
+    tool_choice: str | None = None,
+) -> dict:
+    """主后端请求；遇可重试错误（429/5xx/网络）且配置了兜底后端时，自动用兜底重试一次。
+
+    兜底配置（.env，v0.12.1）：`DEEPSEEK_FALLBACK_API_KEY` / `LLM_FALLBACK_BASE_URL` /
+    `LLM_FALLBACK_MODEL`。无兜底 key、或兜底与主后端相同 → 原样抛出，不重复请求。
+    兜底本身再失败 → 直接抛出（错误信息如实上报，不吞）。
+    """
+    settings = get_settings()
+    try:
+        return _post(
+            messages, api_key=api_key, model=model, base_url=base_url,
+            temperature=temperature, max_tokens=max_tokens, timeout=timeout,
+            tools=tools, tool_choice=tool_choice,
+        )
+    except LLMError as exc:
+        if not getattr(exc, "retryable", False):
+            raise
+        fb_key = settings.llm_fallback_api_key
+        if not fb_key or (fb_key == api_key and settings.llm_fallback_base_url == base_url):
+            raise
+        return _post(
+            messages, api_key=fb_key, model=settings.llm_fallback_model,
+            base_url=settings.llm_fallback_base_url, temperature=temperature,
+            max_tokens=max_tokens, timeout=timeout, tools=tools, tool_choice=tool_choice,
+        )
 
 
 def chat(
@@ -111,7 +161,7 @@ def chat(
             "未配置 DEEPSEEK_API_KEY：请在项目根目录 .env 写入后重试（示例：DEEPSEEK_API_KEY=sk-xxx）"
         )
 
-    choice = _post(
+    choice = _post_fallback(
         messages,
         api_key=api_key,
         model=model,
@@ -122,6 +172,13 @@ def chat(
     )
     content = choice["message"].get("content")
     if not content:
+        # 推理模型（如 SenseNova 托管的 deepseek-v4-flash）把 max_tokens 用在
+        # reasoning_content（思考）上时，正文字段会为空——给可行动的提示而非笼统报错。
+        if choice["message"].get("reasoning_content") and choice.get("finish_reason") == "length":
+            raise LLMError(
+                "DeepSeek 返回为空：模型把 max_tokens 全部用于思考（reasoning_content），"
+                "正文字段为空；请调大 max_tokens 或改用非推理模型"
+            )
         raise LLMError(f"DeepSeek 返回为空: {str(choice)[:300]}")
     return content.strip()
 
@@ -157,7 +214,7 @@ def chat_tools(
             "未配置 DEEPSEEK_API_KEY：请在项目根目录 .env 写入后重试（示例：DEEPSEEK_API_KEY=sk-xxx）"
         )
 
-    choice = _post(
+    choice = _post_fallback(
         messages,
         api_key=api_key,
         model=model,

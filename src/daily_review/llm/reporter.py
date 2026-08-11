@@ -444,7 +444,8 @@ def _hotspot_brief(indicators: dict, api_key: str, *, model: str | None = None) 
         },
     ]
     try:
-        return chat(messages, api_key=api_key, model=model, temperature=0.5, max_tokens=500).strip()
+        # 1500：推理模型（deepseek-v4-flash）的 reasoning_content 会先占预算，500 易被思考吃光致正文为空
+        return chat(messages, api_key=api_key, model=model, temperature=0.5, max_tokens=1500).strip()
     except LLMError:
         return ""
 
@@ -714,7 +715,7 @@ def generate_report(
         },
     ]
     try:
-        overview = chat(messages, api_key=api_key, max_tokens=600)
+        overview = chat(messages, api_key=api_key, max_tokens=1200)  # 推理模型预留 reasoning 预算
     except LLMError as exc:
         overview = f"核心数据：{_compact_json(_headline(indicators))}\n\n（总览生成失败：{exc}）"
 
@@ -734,7 +735,7 @@ def generate_report(
         {"role": "user", "content": _plan_user(trade_date, indicators, strategy, emo_hint, hotspot=hotspot_hint)},
     ]
     try:
-        plan_body = chat(messages, api_key=api_key, max_tokens=1500)
+        plan_body = chat(messages, api_key=api_key, max_tokens=2500)  # 推理模型预留 reasoning 预算
     except LLMError as exc:
         plan_body = f"（预案生成失败：{exc}。{plan_rule}）"
 

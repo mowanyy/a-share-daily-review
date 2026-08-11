@@ -55,6 +55,12 @@ class Settings:
     # 空 → 回落 llm_model；可设 deepseek-reasoner 等（走 chat，非 chat_tools）。
     hotspot_model: str = field(default_factory=lambda: os.getenv("HOTSPOT_MODEL", ""))
 
+    # 兜底提供商（v0.12.1）：主后端（如商汤 SenseNova，限流/慢）429/5xx/网络失败时，
+    # 自动用兜底 key/接口/模型重试一次（如官方 DeepSeek）。空 fallback key = 不兜底。
+    llm_fallback_api_key: str = field(default_factory=lambda: os.getenv("DEEPSEEK_FALLBACK_API_KEY", ""))
+    llm_fallback_base_url: str = field(default_factory=lambda: os.getenv("LLM_FALLBACK_BASE_URL", "https://api.deepseek.com"))
+    llm_fallback_model: str = field(default_factory=lambda: os.getenv("LLM_FALLBACK_MODEL", "deepseek-chat"))
+
 
 def get_settings() -> Settings:
     """返回单例配置。"""
