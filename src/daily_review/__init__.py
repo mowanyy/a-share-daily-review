@@ -21,6 +21,13 @@ v0.9：新增图形启动器——双击 启动.bat 或桌面快捷方式「每�
       一键启动 Web 工作台 / 跑复盘 / 数据看板 / 交互问答；launcher.py 纯核心（可离线
       单测）+ launcher_gui.py 窗口 + launch CLI 子命令（--dry-run 无头自检）；子进程
       用控制台 python.exe + PYTHONIOENCODING=utf-8 + CREATE_NO_WINDOW/NEW_CONSOLE。
+v0.10：修复 Web 数据看板「不显示」——根因 /api/dashboard/view 每次请求都重新联网
+      采集约 2 分钟导致 iframe 空白；新增进程内 DashboardCache（按 交易日期+N+no_llm
+      缓存、最多 16 条逐出最旧、只缓存成功）+ 复用已生成 output/{date}_看板.html
+      （默认 10 日）+ 自包含错误兜底页 + 保鲜规则（历史定稿常新 / 今日盘中 10 分钟 /
+      收盘后须 15:00 后生成）；内容增强并放一页：新增「近 N 日趋势摘要表」与「情绪
+      温度成分拆解」面板，iframe 随内容自适应高度与页面融为一体，LLM 解读配置了 key
+      默认开启，review 页加「查看该日看板」跳转，新增 /api/config/llm 探测。
 """
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"

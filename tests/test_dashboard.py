@@ -16,9 +16,11 @@ import pytest
 import daily_review.pipeline as pipeline
 from daily_review import dashboard
 from daily_review.dashboard import (
+    _assemble_payload,
     _dashboard_interpretation,
     build_trend,
     generate_dashboard,
+    render_error_html,
     render_html,
 )
 from daily_review.llm.client import LLMError
@@ -174,6 +176,20 @@ class TestBuildTrend:
         assert rows[1]["dt_count"] == 0
 
 
+class TestAssemblePayload:
+    def test_emotion_contains_raw_for_components(self):
+        indicators = {**_empty_indicators(), "emotion": {
+            "available": True, "score": 80.0, "stage": "高潮期", "stage_reason": "依据",
+            "series": [], "components": {"zt": 30.0, "height": 80.0},
+            "raw": {"zt_count": 60, "max_lb": 5},
+        }}
+        collected = _collected()
+        payload = _assemble_payload(indicators, build_trend(_collected(), indicators, 3), collected)
+        # 成分拆解面板需要 raw（今日值）与 components（成分分）
+        assert payload["emotion"]["raw"] == {"zt_count": 60, "max_lb": 5}
+        assert payload["emotion"]["components"] == {"zt": 30.0, "height": 80.0}
+
+
 class TestRenderHtml:
     def test_self_contained_no_external(self):
         html_text = render_html(_small_payload(), llm_text="")
@@ -182,6 +198,24 @@ class TestRenderHtml:
         # 单文件自包含：零协议前缀 / 零外链标签（SVG 命名空间由拼装规避字面量）
         for bad in ("http://", "https://", "<script src", "<link", "src="):
             assert bad not in html_text, f"自包含断言失败：出现 {bad!r}"
+
+    def test_enriched_panels_present(self):
+        html_text = render_html(_small_payload(), llm_text="")
+        # 趋势摘要表 + 情绪温度成分拆解两个新面板（放一起、内容更全）
+        assert 'id="trend-summary"' in html_text
+        assert 'id="emotion-comp"' in html_text
+        assert "renderTrendSummary" in html_text
+        assert "renderEmotionComp" in html_text
+
+    def test_render_error_html_self_contained_escaped(self):
+        html_text = render_error_html("20260806", 'ConnectionError: <boom> & "x"')
+        assert "数据看板生成失败" in html_text
+        assert "20260806" in html_text
+        assert "ConnectionError" in html_text
+        # 异常文本转义防注入
+        assert "<boom>" not in html_text
+        for bad in ("http://", "https://", "<script src", "<link"):
+            assert bad not in html_text, f"错误页自包含断言失败：{bad!r}"
 
     def test_json_script_injection_escaped(self):
         payload = _small_payload()

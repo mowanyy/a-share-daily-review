@@ -108,6 +108,7 @@ def _assemble_payload(indicators: dict, trend: list[dict], collected: dict) -> d
             "stage": emo.get("stage"),
             "stage_reason": emo.get("stage_reason"),
             "components": emo.get("components", {}),
+            "raw": emo.get("raw", {}),
         },
         "ladder": {
             "ladder": ladder.get("ladder", []),
@@ -301,6 +302,9 @@ tbody tr:nth-child(even) { background: rgba(128,128,128,.05); }
     </figure>
   </section>
 
+  <section class="panel"><h2>近__N_DAYS__日趋势摘要</h2><div id="trend-summary"></div></section>
+  <section class="panel"><h2>情绪温度成分拆解</h2><div id="emotion-comp"></div></section>
+
   <section class="panel"><h2>连板梯队</h2><div id="ladder"></div></section>
   <section class="panel"><h2>题材结构</h2><div id="themes"></div></section>
   <section class="panel"><h2>炸板与资金</h2><div id="break"></div></section>
@@ -321,6 +325,7 @@ function fmtMoney(v) {
   return Math.round(v).toString();
 }
 function pct(v, d) { return v === null || v === undefined ? "—" : (v * 100).toFixed(d ?? 1) + "%"; }
+function pctPct(v, d) { return v === null || v === undefined ? "—" : v.toFixed(d ?? 1) + "%"; } /* 值已是百分数（东财 zdp/CHANGE_RATE），不再 ×100 */
 function upDown(v) { return v > 0 ? "up" : v < 0 ? "down" : ""; }
 
 /* ---------- SVG 绘图（通用） ---------- */
@@ -610,7 +615,7 @@ function renderBreak() {
   const rows = b.table.map(r =>
     "<tr><td>" + esc(r.code + " " + r.name) + "</td><td>" + esc(r.industry || "") + "</td>"
     + "<td class='num'>" + r.break_times + "</td>"
-    + "<td class='num'><span class='" + upDown(r.up_pct) + "'>" + pct(r.up_pct, 2) + "</span></td>"
+    + "<td class='num'><span class='" + upDown(r.up_pct) + "'>" + pctPct(r.up_pct, 2) + "</span></td>"
     + "<td class='num'>" + esc(fmtMoney(r.main_net_inflow)) + "</td>"
     + "<td>" + esc(r.signal || "") + "</td></tr>").join("");
   el.innerHTML = "<table><thead><tr><th>代码 名称</th><th>行业</th><th class='num'>炸板次数</th>"
@@ -627,7 +632,7 @@ function renderLhb() {
     .map(t => "<span class='chip'>" + esc(t) + "</span>").join(" ");
   const rank = (l.net_rank || []).slice(0, 10).map(r =>
     "<tr><td>" + esc(r.code + " " + r.name) + "</td>"
-    + "<td class='num'><span class='" + upDown(r.change_rate) + "'>" + pct(r.change_rate, 2) + "</span></td>"
+    + "<td class='num'><span class='" + upDown(r.change_rate) + "'>" + pctPct(r.change_rate, 2) + "</span></td>"
     + "<td class='num'>" + esc(fmtMoney(r.net_amt)) + "</td>"
     + "<td>" + esc((r.reasons || []).join("；").slice(0, 40)) + "</td></tr>").join("");
   let hm = "";
@@ -646,9 +651,49 @@ function renderLhb() {
     + "<th class='num'>净买额</th><th>上榜原因</th></tr></thead><tbody>" + rank + "</tbody></table>" + hm;
 }
 
+function renderTrendSummary() {
+  const rows = DATA.trend, el = document.getElementById("trend-summary");
+  if (!rows.length) { el.innerHTML = '<div class="empty">无趋势数据</div>'; return; }
+  const trs = rows.map(r =>
+    "<tr><td>" + fmtDate(r.date) + "</td>"
+    + "<td class='num'>" + r.zt_count + "</td>"
+    + "<td class='num'>" + r.lianban_count + "</td>"
+    + "<td class='num'>" + r.max_lb + "</td>"
+    + "<td class='num'>" + r.break_count + "</td>"
+    + "<td class='num'>" + pct(r.break_rate) + "</td>"
+    + "<td class='num'>" + r.dt_count + "</td>"
+    + "<td class='num'>" + (r.emotion === null || r.emotion === undefined ? "—" : Math.round(r.emotion)) + "</td>"
+    + "<td>" + esc((r.missing || []).join("、")) + "</td></tr>").join("");
+  el.innerHTML = "<table><thead><tr><th>日期</th><th class='num'>涨停</th><th class='num'>连板</th>"
+    + "<th class='num'>最高板</th><th class='num'>炸板</th><th class='num'>炸板率</th>"
+    + "<th class='num'>跌停</th><th class='num'>情绪温度</th><th>缺失</th></tr></thead><tbody>"
+    + trs + "</tbody></table>";
+}
+
+function renderEmotionComp() {
+  const emo = DATA.emotion, el = document.getElementById("emotion-comp");
+  if (!emo.available) { el.innerHTML = '<div class="empty">情绪温度数据不足</div>'; return; }
+  const comps = emo.components || {}, raw = emo.raw || {};
+  const defs = [
+    { k: "zt", label: "涨停家数", rk: "zt_count", fmt: v => Math.round(v) + " 家" },
+    { k: "height", label: "空间板高度", rk: "max_lb", fmt: v => Math.round(v) + " 板" },
+    { k: "promote", label: "晋级延续率", rk: "promote", fmt: v => pct(v, 0) },
+    { k: "break", label: "炸板率", rk: "break_rate", fmt: v => pct(v, 0) },
+    { k: "dt", label: "跌停家数", rk: "dt_count", fmt: v => Math.round(v) + " 家" },
+  ];
+  const rows = defs.map(d =>
+    "<tr><td>" + d.label + "</td>"
+    + "<td class='num'>" + (raw[d.rk] === null || raw[d.rk] === undefined ? "—" : d.fmt(raw[d.rk])) + "</td>"
+    + "<td class='num'>" + (comps[d.k] === null || comps[d.k] === undefined ? "—" : Math.round(comps[d.k])) + "</td></tr>").join("");
+  el.innerHTML = "<table><thead><tr><th>成分</th><th class='num'>今日值</th>"
+    + "<th class='num'>成分分(0-100)</th></tr></thead><tbody>" + rows + "</tbody></table>";
+}
+
 function init() {
   renderKPI();
   renderCharts();
+  renderTrendSummary();
+  renderEmotionComp();
   renderLadder();
   renderThemes();
   renderBreak();
@@ -674,6 +719,43 @@ def render_html(payload: dict, llm_text: str = "") -> str:
         .replace("__N_DAYS__", str(payload.get("n_days", "")))
         .replace("__LLM_TEXT__", llm_html)
         .replace("__DATA_JSON__", data_json)
+    )
+
+
+_ERROR_TEMPLATE = """<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>数据看板生成失败</title>
+<style>
+body { margin:0; font-family:system-ui,"Microsoft YaHei",sans-serif; background:#0d1117; color:#e6edf3; }
+.box { max-width:680px; margin:48px auto; padding:24px 28px; background:#161b22; border:1px solid #30363d; border-radius:10px; }
+h1 { font-size:20px; margin:0 0 10px; color:#f5222d; }
+p { color:#8b949e; font-size:14px; line-height:1.6; }
+.sub { color:#6e7681; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>数据看板生成失败（__DATE__）</h1>
+  <p>__MSG__</p>
+  <p class="sub">可能原因：网络不通（东财接口）、当日行情数据尚未完整，或接口临时限流。可稍后重试，或先确认该日复盘数据已采集。</p>
+</div>
+</body>
+</html>"""
+
+
+def render_error_html(trade_date: str, message: str) -> str:
+    """看板生成失败时的自包含错误页（供 web iframe 用，避免裸 500 白屏）。
+
+    数据经 html.escape 转义（错误消息可能含异常文本/特殊字符，日期也一并转义防注入），
+    不落库、不缓存。
+    """
+    return (
+        _ERROR_TEMPLATE
+        .replace("__DATE__", html.escape(str(trade_date)))
+        .replace("__MSG__", html.escape(message))
     )
 
 

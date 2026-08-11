@@ -1,4 +1,4 @@
-"""管道层离线测试：缓存读回时 code 列零填充；_fetch_opt 容错（成功标志）。"""
+"""管道层离线测试：缓存读回时 code 列零填充；_fetch_opt 容错（成功标志）；save_csv 原子写。"""
 
 from __future__ import annotations
 
@@ -81,3 +81,35 @@ class TestCached:
         df2 = _cached("zt_pool", "20260810", fetch, use_cache=False)
         assert len(fetched) == 1
         assert df2["code"].tolist() == ["600000"]
+
+
+class TestRepoSaveCsvAtomic:
+    """repo.save_csv 原子写：先写同目录临时文件再 os.replace——Web 并发 collect 不产生 torn CSV。"""
+
+    def _settings(self, tmp_path, monkeypatch):
+        class _Settings:
+            data_dir = tmp_path / "data"
+
+        monkeypatch.setattr("daily_review.data.repo.get_settings", lambda: _Settings())
+
+    def test_writes_readable_csv_no_tmp_left(self, tmp_path, monkeypatch):
+        from daily_review.data import repo
+
+        self._settings(tmp_path, monkeypatch)
+        df = pd.DataFrame({"trade_date": ["20260806"], "code": ["600000"], "up_pct": [9.87]})
+        path = repo.save_csv(df, "zt_pool", "20260806")
+        assert path.name == "zt_pool.csv"
+        back = pd.read_csv(path, dtype={"code": str})
+        assert back["code"].tolist() == ["600000"]
+        assert float(back["up_pct"].iloc[0]) == 9.87
+        # 无残留临时文件
+        assert [p.name for p in path.parent.iterdir()] == ["zt_pool.csv"]
+
+    def test_repeated_writes_overwrite_cleanly(self, tmp_path, monkeypatch):
+        from daily_review.data import repo
+
+        self._settings(tmp_path, monkeypatch)
+        for i in range(3):
+            repo.save_csv(pd.DataFrame({"code": [f"{i:06d}"]}), "zb_pool", "20260806")
+        back = pd.read_csv(tmp_path / "data" / "20260806" / "zb_pool.csv", dtype={"code": str})
+        assert back["code"].tolist() == ["000002"]
