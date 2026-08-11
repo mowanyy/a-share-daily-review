@@ -51,6 +51,9 @@ class Settings:
         default_factory=lambda: os.getenv("DEEPSEEK_API_KEY") or os.getenv("LLM_API_KEY", "")
     )
     llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "deepseek-chat"))
+    # 多模型协作：热点信息模型（模型 B）独立提炼当日热点，注入主分析师撰写。
+    # 空 → 回落 llm_model；可设 deepseek-reasoner 等（走 chat，非 chat_tools）。
+    hotspot_model: str = field(default_factory=lambda: os.getenv("HOTSPOT_MODEL", ""))
 
 
 def get_settings() -> Settings:

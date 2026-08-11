@@ -8,11 +8,15 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.11.0`：**多模型协作热点复盘已可用**——撰写复盘时由独立**热点模型（模型 B）**（`module.hotspot` prompt，`HOTSPOT_MODEL` 可选、默认回落主模型）基于已采集概念板块行情+当日题材提炼当日 2-4 条热点主线简报，注入主分析师（模型 A）的「一总览/四题材/七次日预案」三章节撰写，让复盘贴合当天热点；概念板块行情采集扩展领涨股字段（f128/f140/f136 实测），pipeline 新增**仅当日**概念板块可选块（clist 实时快照，历史日期硬守卫不采集），不新增报告章节、`generate_report` 签名不变，热点调用失败降级确定性 Top-N，无概念数据逐字节保持旧行为。
+
 `v0.10.0`：**端到端复盘 + 数据看板（修复+增强）+ 交互问答 + Flask 全套工作台 + 个人战法 + 图形启动器已可用**——东财涨跌停池/资金流/概念板块采集（`data/eastmoney_pool.py`）、**龙虎榜榜单/买卖席位采集（`data/eastmoney_lhb.py`）+ 知名游资识别名单（`data/hotmoney_seats.py`，可人工增补）**、指标计算（**情绪温度 `analysis/emotion.py`** / 连板梯队 / 题材周期 / 炸板净流入 / 龙虎榜游资，`analysis/`）、**DeepSeek LLM 自动生成 Markdown 复盘报告**（`llm/`）、**数据看板 `dashboard.py`**（近 10 个交易日趋势图表单文件 HTML + 趋势摘要表 + 情绪温度成分拆解 + LLM 多日趋势解读）、**交互问答 `kb/`**（RAG 短线知识库：`prompts/**`+`docs/` 部分+`knowledge/**`+`data/strategies/**` 自动收录、混合检索【sklearn 关键词 + 可选 bge-small-zh 向量 + RRF 融合】、源文件 sha256 增量重建持续更新；6 个数据工具 function-calling 落地 `tool.datatools`）、**Web 工作台 `web/`**（Flask：战法管理 / 跑复盘看报告与次日预案 / 问答 / 数据看板）、**个人战法 → 次日预案**（`web/strategy.py` 服务 + `llm/reporter.py::generate_report(..., strategy=)` 注入；战法由用户**页面上传**落盘 gitignored `data/strategies/`，**不写死进代码/tracked 目录**）、**图形启动器**（`launcher.py` 纯核心 + `launcher_gui.py` tkinter 窗口 + 根目录 `启动.bat`/`launcher.py` + `launch` CLI 子命令 + 桌面快捷方式；一键启动 Web/复盘/看板/问答，`--dry-run` 无头自检）。管道 `pipeline.py` + CLI `review`/`dashboard`/`qa`/`web`/`launch` 子命令。报告为**七章结构**（总览 / 情绪温度 / 连板梯队 / 题材 / 炸板资金 / 龙虎榜游资 / 次日预案）。运行环境固定为 `E:/conda_envs/envs/mowan_dm/python.exe`（勿改用其他解释器）。
 
 **Web 数据看板性能修复（v0.10）**：`/api/dashboard/view` 此前每次请求都重新联网采集约 2 分钟 → iframe 空白「不显示」。现采用三层——① 进程内 `DashboardCache`（按 交易日期+N+no_llm 缓存、最多 16 条逐出最旧、**只缓存成功**）；② 复用已生成 `output/{date}_看板.html`（仅默认 10 日）；③ 采集/指标失败 → 自包含错误兜底页（HTTP 200 进 iframe，不裸 500）。保鲜规则：历史日期定稿常新；今日盘中 10 分钟 TTL；今日 15:00 后须 15:00 后生成才有效（`_dashboard_cache_is_fresh`，`_clock()` 可测）。看板内容增强放一页：新增「近 N 日趋势摘要表」「情绪温度成分拆解」面板，iframe 随内容自适应高度，LLM 解读配置 key 默认开启，review 页新增「查看该日看板」跳转，`/api/config/llm` 探测 key。
 
-**LLM 密钥**：`.env`（不入库，已 gitignore）里 `DEEPSEEK_API_KEY=sk-xxx`；缺 key 时 `review --no-llm` / `dashboard --no-llm` 仍可跑通数据+指标+看板。
+**多模型协作（v0.11）**：`generate_report` 在模块循环前先做一次独立 LLM 调用（模型 B，`module.hotspot`，`max_tokens=500`）提炼当日热点简报，注入 一总览/四题材/七预案 三章节（措辞块「【另一模型提炼的当日热点（…）】」，须引用并校验、不得编造）。热点模型名用环境变量 `HOTSPOT_MODEL`（如 `deepseek-reasoner`）切换，默认空回落 `llm_model`。概念板块数据仅当日采集（`_fetch_concept_boards_block` 非今日硬守卫），不入报告章节、只供热点简报。
+
+**LLM 密钥**：`.env`（不入库，已 gitignore）里 `DEEPSEEK_API_KEY=sk-xxx`（可选 `HOTSPOT_MODEL`）；缺 key 时 `review --no-llm` / `dashboard --no-llm` 仍可跑通数据+指标+看板。
 
 已可用命令（在项目根目录，`PYTHONPATH=src`）：
 ```bash
@@ -108,6 +112,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `module.break` | `prompts/modules/炸板净流入.md` | draft |
 | `module.lhb` | `prompts/modules/龙虎榜游资.md` | draft |
 | `module.plan` | `prompts/modules/次日预案.md` | draft |
+| `module.hotspot` | `prompts/modules/热点信息简报.md` | draft |
 | `strategy.template` | `prompts/strategies/战法模板.md` | draft |
 | `strategy.example` | `prompts/strategies/示例-连板接力.md` | draft |
 | `tool.datatools` | `prompts/tools/数据工具schema.md` | draft |

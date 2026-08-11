@@ -344,11 +344,23 @@ def fetch_moneyflow(codes: list[str], trade_date: str, name_map: dict | None = N
 
 # ---------------------------------------------------------------- 概念板块 / 行业
 
+# 概念板块领涨字段（已实测 2026-08-11）：f128=领涨股名称、f140=领涨股代码、f136=领涨股涨跌幅%
+CONCEPT_BOARD_COLUMNS = [
+    "board_code", "board_name", "pct", "main_net_inflow",
+    "leader_code", "leader_name", "leader_pct",
+]
+
+
 def fetch_concept_boards() -> pd.DataFrame:
-    """概念板块行情（东财概念板块，含涨幅与主力净流入）。列：board_code/board_name/pct/main_net_inflow。"""
+    """概念板块行情（东财概念板块，按涨幅排序，含主力净流入与领涨股）。
+
+    列：board_code/board_name/pct/main_net_inflow
+        + 领涨股 leader_code/leader_name/leader_pct（接口未返回领涨字段时自动回退 4 列）。
+    实时快照（clist 当前值），仅供当日采集——历史日期复盘不得引用（见 pipeline 守卫）。
+    """
     payload = _clist_json({
         "fid": "f3", "pz": 600, "fs": "m:90+t:2",
-        "fields": "f12,f14,f3,f62",
+        "fields": "f12,f14,f3,f62,f128,f140,f136",
     })
     diff = (payload.get("data") or {}).get("diff") or []
     rows = []
@@ -358,8 +370,14 @@ def fetch_concept_boards() -> pd.DataFrame:
             "board_name": str(item.get("f14", "")),
             "pct": _num(item.get("f3")),
             "main_net_inflow": _num(item.get("f62")),
+            "leader_code": str(item.get("f140", "") or ""),
+            "leader_name": str(item.get("f128", "") or ""),
+            "leader_pct": _num(item.get("f136")),
         })
-    df = pd.DataFrame(rows, columns=["board_code", "board_name", "pct", "main_net_inflow"])
+    df = pd.DataFrame(rows, columns=CONCEPT_BOARD_COLUMNS)
+    # 实测降级：接口未返回领涨字段（全空）→ 回退 4 列，下游契约稳定（空表保持 7 列）
+    if not df.empty and df["leader_code"].astype(str).str.strip().eq("").all():
+        df = df[["board_code", "board_name", "pct", "main_net_inflow"]]
     return df
 
 

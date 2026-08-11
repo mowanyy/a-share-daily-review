@@ -45,6 +45,17 @@ def _zfill_codes(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _fmt_concept_code(v) -> str:
+    """概念板块领涨股代码标准化：CSV 往返后可能变 float/int（前导零丢失、空→NaN），
+    统一补零为 6 位；None/NaN/空 → ""。"""
+    if v is None or pd.isna(v):
+        return ""
+    if isinstance(v, float):
+        v = int(v)
+    s = str(v)
+    return s.zfill(6) if s.isdigit() else s
+
+
 def _cached(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame],
             *, use_cache: bool = True) -> pd.DataFrame:
     """CSV 缓存优先；空结果不缓存（下次重取）。
@@ -80,12 +91,20 @@ def _fetch_opt(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame],
         return _empty_df(["trade_date", "code"]), False
 
 
-def _build_concept_map(zt_codes: list[str], trade_date: str) -> dict[str, list[str]]:
-    """当日涨停股 → 概念标签（取涨幅前 N 的概念板块成分交集，best-effort）。"""
-    try:
-        boards = em.fetch_concept_boards()
-    except Exception:
-        return {}
+def _build_concept_map(
+    zt_codes: list[str],
+    trade_date: str,
+    boards: pd.DataFrame | None = None,
+) -> dict[str, list[str]]:
+    """当日涨停股 → 概念标签（取涨幅前 N 的概念板块成分交集，best-effort）。
+
+    boards：已取到的概念板块行情（复用概念块数据，避免重复联网）；None → 内部自取（旧行为）。
+    """
+    if boards is None:
+        try:
+            boards = em.fetch_concept_boards()
+        except Exception:
+            return {}
     if boards.empty:
         return {}
     top = boards.sort_values("pct", ascending=False).head(TOP_CONCEPT_BOARDS)
@@ -99,6 +118,40 @@ def _build_concept_map(zt_codes: list[str], trade_date: str) -> dict[str, list[s
             if c in mapping:
                 mapping[c].append(str(b["board_name"]))
     return {c: vs for c, vs in mapping.items() if vs}
+
+
+def _fetch_concept_boards_block(
+    trade_date: str, *, fresh: bool = True
+) -> tuple[pd.DataFrame, bool]:
+    """概念板块可选块：仅当日采集（clist 为实时快照；历史日期不采，避免今日快照误导）。
+
+    返回 (df, ok)；非今日 / 失败 → 空表 + False，绝不中断 collect。
+    """
+    if trade_date != datetime.now().strftime("%Y%m%d"):
+        return _empty_df(em.CONCEPT_BOARD_COLUMNS), False
+    df, ok = _fetch_opt(
+        "concept_boards", trade_date,
+        lambda: em.fetch_concept_boards(),
+        use_cache=fresh,  # 与 zt 同语义：盘中快照收盘后（>=15:00）作废重取
+    )
+    return (df if ok else _empty_df(em.CONCEPT_BOARD_COLUMNS)), ok
+
+
+def _concept_boards_block(
+    zt: pd.DataFrame, trade_date: str, *, fresh: bool = True
+) -> tuple[pd.DataFrame, bool]:
+    """collect 概念板块入口：仅「当日且当日有涨停数据」采集；瞬时失败重试一次。
+
+    - zt 为空（非交易日/无涨停）→ 不采集，避免 clist 今日快照写成非交易日数据。
+    - 首次失败（空结果不落缓存）→ 重试一次；块与 concept_map 共用同一份数据。
+    返回 (df, ok)；绝不中断 collect。
+    """
+    if zt.empty:
+        return _empty_df(em.CONCEPT_BOARD_COLUMNS), False
+    df, ok = _fetch_concept_boards_block(trade_date, fresh=fresh)
+    if df.empty and not ok:
+        df, ok = _fetch_concept_boards_block(trade_date, fresh=fresh)
+    return df, ok
 
 
 def collect(trade_date: str, n_days: int = TIMELINE_DAYS) -> dict:
@@ -159,11 +212,18 @@ def collect(trade_date: str, n_days: int = TIMELINE_DAYS) -> dict:
         zt["industry"] = zt["industry"].map(lambda x: industry_map.get(x, x))
         zb["industry"] = zb["industry"].map(lambda x: industry_map.get(x, x))
 
-    # 4. 概念标签（仅当日有意义；历史日期跳过，避免用今日板块误导）
+    # 4. 概念板块（可选块：clist 实时快照，仅「当日且当日有涨停数据」采集；
+    #    历史日期/非交易日不采，避免今日快照误导；瞬时失败重试一次）
+    concept_boards, concept_boards_ok = _concept_boards_block(zt, trade_date, fresh=fresh)
+
+    # 4a. 概念标签（复用概念板块数据，仅当日；历史日期跳过）
     concept_map: dict[str, list[str]] = {}
     if trade_date == datetime.now().strftime("%Y%m%d"):
         try:
-            concept_map = _build_concept_map([str(c) for c in zt["code"]], trade_date)
+            concept_map = _build_concept_map(
+                [str(c) for c in zt["code"]], trade_date,
+                boards=None if concept_boards.empty else concept_boards,
+            )
         except Exception:
             pass
 
@@ -200,6 +260,8 @@ def collect(trade_date: str, n_days: int = TIMELINE_DAYS) -> dict:
         "prev_pools": prev_pools,
         "height_series": height_series,
         "concept_map": concept_map,
+        "concept_boards": concept_boards,
+        "concept_boards_ok": concept_boards_ok,
         "moneyflow": moneyflow,
         "lhb_daily": lhb_daily,
         "lhb_seats": lhb_seats,
@@ -255,6 +317,24 @@ def compute(collected: dict) -> dict:
         for _, r in zt.iterrows()
     ]
 
+    # 概念板块（供热点模型提炼当日热点；仅当日有值）。4 列/7 列两种形态都用 .get 兜底。
+    # 缓存往返防护：CSV 读回后领涨股代码变 float（前导零丢失）、空值变 NaN → 统一标准化。
+    concept_boards: list[dict] = []
+    cb = collected.get("concept_boards")
+    if cb is not None and not cb.empty:
+        if "pct" in cb.columns:
+            cb = cb.sort_values("pct", ascending=False)
+        cb = cb.head(TOP_CONCEPT_BOARDS)
+        for _, r in cb.iterrows():
+            concept_boards.append({
+                "board_name": "" if pd.isna(r.get("board_name")) else str(r.get("board_name")),
+                "pct": None if pd.isna(r.get("pct")) else float(r.get("pct")),
+                "main_net_inflow": None if pd.isna(r.get("main_net_inflow")) else float(r.get("main_net_inflow")),
+                "leader_code": _fmt_concept_code(r.get("leader_code")),
+                "leader_name": "" if pd.isna(r.get("leader_name")) else str(r.get("leader_name")),
+                "leader_pct": None if pd.isna(r.get("leader_pct")) else float(r.get("leader_pct")),
+            })
+
     return {
         "trade_date": collected["trade_date"],
         "ladder": ladder,
@@ -263,5 +343,6 @@ def compute(collected: dict) -> dict:
         "lhb": lhb_res,
         "emotion": emotion,
         "zt_pool": zt_pool,
+        "concept_boards": concept_boards,
         "timeline_dates": collected["timeline_dates"],
     }

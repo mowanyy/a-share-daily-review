@@ -25,6 +25,7 @@
 | `module.break` | [modules/炸板净流入.md](modules/炸板净流入.md) | report | 炸板池、资金流 | 炸板资金章节 | draft |
 | `module.lhb` | [modules/龙虎榜游资.md](modules/龙虎榜游资.md) | report | 龙虎榜榜单、买卖席位、涨停池 | 龙虎榜游资章节 | draft |
 | `module.plan` | [modules/次日预案.md](modules/次日预案.md) | report | 当日复盘 + 战法 | 次日预案章节 | draft |
+| `module.hotspot` | [modules/热点信息简报.md](modules/热点信息简报.md) | report | 概念板块行情、当日题材 | 当日热点主线简报 | draft |
 | `strategy.template` | [strategies/战法模板.md](strategies/战法模板.md) | strategy | —（模板） | 战法文件结构 | draft |
 | `strategy.example` | [strategies/示例-连板接力.md](strategies/示例-连板接力.md) | strategy | —（示例） | 示范战法 | draft |
 | `example.report` | [examples/复盘示例_20260806.md](examples/复盘示例_20260806.md) | example | 示意数据 | 复盘范文 | draft |
@@ -42,7 +43,8 @@
     ├─ module.theme     → 题材归类章节
     ├─ module.break     → 炸板资金章节
     ├─ module.lhb       → 龙虎榜游资章节
-    └─ module.plan      → 次日预案章节（引用 strategy.* 战法）
+    ├─ module.plan      → 次日预案章节（引用 strategy.* 战法）
+    └─ module.hotspot   → 模型 B 独立提炼当日热点简报，注入 一总览/四题材/七预案（不新增章节）
 
 看板模式（数据看板 + LLM 多日趋势解读）
   module.dashboard → 「多日趋势解读」一段（数据看板主体为程序核算图表，

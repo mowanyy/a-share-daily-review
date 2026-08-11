@@ -81,3 +81,40 @@ class TestRecentTradeDates:
         monkeypatch.setattr(em, "_pool_json", fake_pool_json)
         dates = em.resolve_recent_trade_dates("20260808", n_days=2)
         assert dates == ["20260806", "20260805"]
+
+
+class TestConceptBoardsParse:
+    @staticmethod
+    def _mock_clist(monkeypatch, diff):
+        def fake_clist(params):
+            assert params["fs"] == "m:90+t:2"
+            assert "f128" in params["fields"] and "f140" in params["fields"] and "f136" in params["fields"]
+            return {"rc": 0, "data": {"diff": diff}}
+        monkeypatch.setattr(em, "_clist_json", fake_clist)
+
+    def test_leader_fields_when_returned(self, monkeypatch):
+        self._mock_clist(monkeypatch, [
+            {"f12": "BK1320", "f14": "逆变器", "f3": 3.1, "f62": 1.04e9,
+             "f128": "德业股份", "f140": "605117", "f136": 6.58},
+        ])
+        df = em.fetch_concept_boards()
+        assert list(df.columns) == em.CONCEPT_BOARD_COLUMNS
+        r = df.iloc[0]
+        assert r["board_code"] == "BK1320" and r["board_name"] == "逆变器"
+        assert r["pct"] == 3.1 and r["main_net_inflow"] == 1.04e9
+        assert r["leader_code"] == "605117" and r["leader_name"] == "德业股份"
+        assert r["leader_pct"] == 6.58
+
+    def test_leader_fields_empty_fallback_to_4_cols(self, monkeypatch):
+        # 接口未返回领涨字段（f128/f140/f136 为空）→ 自动回退 4 列，下游契约稳定
+        self._mock_clist(monkeypatch, [
+            {"f12": "BK1001", "f14": "样本", "f3": 2.0, "f62": 3e7, "f128": "", "f140": "", "f136": None},
+        ])
+        df = em.fetch_concept_boards()
+        assert list(df.columns) == ["board_code", "board_name", "pct", "main_net_inflow"]
+
+    def test_empty_diff(self, monkeypatch):
+        self._mock_clist(monkeypatch, [])
+        df = em.fetch_concept_boards()
+        assert df.empty
+        assert list(df.columns) == em.CONCEPT_BOARD_COLUMNS

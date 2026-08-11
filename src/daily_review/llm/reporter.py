@@ -332,12 +332,14 @@ def _module_chapter(
     *,
     forced: str = "",
     extra_rule: str = "",
+    context: str = "",
 ) -> str:
     """单模块 LLM 生成章节；失败返回兜底数据表（附注失败原因）。
 
     indicators: 全量指标（fallback 生成数据表需要）。
     forced: 程序核算的确定性内容（如总览一行），以指令形式注入，LLM 必须原样采用。
     extra_rule: 追加的输出纪律（如「已核算表格不得重算」）。
+    context: 追加的用户消息上下文（如另一模型提炼的热点简报），仅非空注入。
     """
     p = get_prompt(prompt_id)
     if p is None:
@@ -347,6 +349,7 @@ def _module_chapter(
         f"\n\n【程序核算结果，输出时必须原样采用，不得改写或另造数字】\n{forced}"
         if forced else ""
     )
+    context_blk = f"{context}\n" if context else ""
     messages = [
         {"role": "system", "content": f"{p.body}\n\n你是模块分析师，{rules}"},
         {
@@ -354,6 +357,7 @@ def _module_chapter(
             "content": (
                 f"今日数据如下（JSON，字段名与上方「输入数据」契约一致，勿改动含义）：\n"
                 f"```json\n{_compact_json(payload)}\n```\n"
+                f"{context_blk}"
                 f"请按上方「任务」输出「{title}」章节的 Markdown 内容（只输出章节正文，不含章节标题本身）。"
                 f"{forced_hint}"
             ),
@@ -393,6 +397,93 @@ def _weekday_cn(ymd: str) -> str:
 def _strip_section_heading(text: str, title: str) -> str:
     """去掉文本开头的「## {title}」标题（LLM 输出偶自带标题，组装时防重复）。"""
     return re.sub(rf"^##\s*{re.escape(title)}\s*\n?", "", text, count=1).strip()
+
+
+# ---------------------------------------------------------------- 热点简报（多模型协作：模型 B 提炼，注入撰写调用）
+
+def _hotspot_payload(ind: dict) -> dict:
+    """热点模型载荷：概念板块涨幅榜 Top-N + 当日题材（已核算）。"""
+    return {
+        "trade_date": ind.get("trade_date") or (ind.get("ladder") or {}).get("trade_date", ""),
+        "概念板块涨幅榜": ind.get("concept_boards", []),
+        "当日题材(已核算)": [
+            {
+                "theme_name": t.get("theme_name", ""),
+                "member_count": t.get("member_count", 0),
+                "max_lb": t.get("max_lb", 0),
+                "stage": t.get("stage", ""),
+                "leader": (t.get("leader") or {}).get("name", ""),
+                "is_main": t.get("is_main", False),
+            }
+            for t in (ind.get("themes") or [])[:5]
+        ],
+    }
+
+
+def _hotspot_brief(indicators: dict, api_key: str, *, model: str | None = None) -> str:
+    """热点信息模型（模型 B）提炼当日热点简报；无数据/无 prompt/失败返回 ""（不中断报告）。
+
+    model：默认取 settings.hotspot_model（env HOTSPOT_MODEL），空 → 回落主模型 llm_model。
+    """
+    if not (indicators.get("concept_boards") or []):
+        return ""
+    p = get_prompt("module.hotspot")
+    if p is None:
+        return ""
+    model = model or get_settings().hotspot_model or None
+    date = (indicators.get("ladder") or {}).get("trade_date", "")
+    messages = [
+        {"role": "system", "content": p.body},
+        {
+            "role": "user",
+            "content": (
+                f"复盘日期：{date[:4]}-{date[4:6]}-{date[6:]}。已采集行情如下（JSON，字段名与「输入数据」契约一致）：\n"
+                f"```json\n{_compact_json(_hotspot_payload(indicators))}\n```\n"
+                "请按「任务」提炼当日 2-4 条热点主线简报。只输出简报正文，150-250 字，不加标题。"
+            ),
+        },
+    ]
+    try:
+        return chat(messages, api_key=api_key, model=model, temperature=0.5, max_tokens=500).strip()
+    except LLMError:
+        return ""
+
+
+def _hotspot_fallback_text(indicators: dict) -> str:
+    """热点 LLM 失败时的确定性替代：概念板块涨幅/主力净流入 Top-N 文本（非 LLM 提炼）。"""
+    rows = (indicators.get("concept_boards") or [])[:5]
+    if not rows:
+        return ""
+    lines = []
+    for r in rows:
+        pct = r.get("pct")
+        inflow = r.get("main_net_inflow")
+        leader = r.get("leader_name") or ""
+        pct_s = "缺" if pct is None else f"{pct:+.2f}%"
+        inflow_s = _fmt_money(inflow) if inflow is not None else "缺"
+        leader_s = f"（领涨 {leader}）" if leader else ""
+        lines.append(f"· {r.get('board_name', '')}：涨幅 {pct_s}，主力净流入 {inflow_s}{leader_s}")
+    return "当日概念板块涨幅靠前：\n" + "\n".join(lines)
+
+
+def _hotspot_hint(brief: str, source: str) -> str:
+    """注入三章节的措辞：告知撰写模型热点线索来源，须引用/校验、不得凭空捏造。
+
+    source: "LLM 提炼"（模型 B 产出）/ "程序按概念板块核算"（确定性 Top-N 兜底）。
+    来源措辞随 source 自适应，避免「程序核算」文本被误标为「热点信息模型提炼」。
+    """
+    if source == "LLM 提炼":
+        label = "另一模型提炼的当日热点（LLM 提炼）"
+        provenance = "由独立的「热点信息模型」基于已采集行情提炼（非凭空生成）"
+    else:
+        label = "程序按概念板块核算的当日热点"
+        provenance = "由程序按概念板块涨幅/主力净流入核算（确定性文本，未经过模型提炼）"
+    return (
+        f"【{label}】\n{brief}\n\n"
+        f"以上热点线索{provenance}，用于锚定当日主线。"
+        "撰写本章时须**引用并校验**：与你本章输入数据能对上的才采用；"
+        "矛盾时以输入数据为准并在文中说明；不得编造该线索之外的「热点主线」。"
+    )
 
 
 # ---------------------------------------------------------------- 组装摘要（供总览/预案）
@@ -491,8 +582,12 @@ def _plan_user(
     indicators: dict,
     strategy: Prompt | None,
     emo_hint: str = "",
+    hotspot: str = "",
 ) -> str:
-    """次日预案 user 消息：日期 + 紧凑摘要 + 输出指令（战法驱动或通用）。"""
+    """次日预案 user 消息：日期 + 紧凑摘要 + 输出指令（战法驱动或通用）。
+
+    hotspot: 另一模型提炼的当日热点（热点简报），仅非空注入（作为预案锚点）。
+    """
     if strategy is not None:
         instr = (
             f"请按战法「{strategy.name}」的触发条件输出「## {PLAN_SECTION}」的正文："
@@ -504,12 +599,14 @@ def _plan_user(
             f"请输出「## {PLAN_SECTION}」的正文：1 段次日核心观点 + 1–3 个关注方向（题材+具体对象+观察信号）"
             "+ 风险警示。全部用「若…则…」条件句式；未指定战法，只给方向与风险，不给具体买卖点。"
         )
-    return (
+    body = (
         f"复盘日期：{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}（{_weekday_cn(trade_date)}）\n"
         f"当日结构化摘要（JSON）：\n```json\n{_compact_json(_build_digest(indicators))}\n```\n\n"
-        f"{instr}{emo_hint}"
-        "只输出正文，不要标题、不要编造数字。"
     )
+    if hotspot:
+        body += f"{hotspot}\n\n"
+    body += f"{instr}{emo_hint}只输出正文，不要标题、不要编造数字。"
+    return body
 
 
 # ---------------------------------------------------------------- 主入口
@@ -543,6 +640,17 @@ def generate_report(
     plan = get_prompt("module.plan")
     title = f"# 📊 {trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]} 复盘（{_weekday_cn(trade_date)}）"
 
+    # 0. 热点简报（模型 B，独立一次调用；失败→确定性 Top-N；无概念数据→不注入）
+    hotspot_hint = ""
+    if indicators.get("concept_boards"):
+        brief = _hotspot_brief(indicators, api_key)
+        if brief:
+            hotspot_hint = _hotspot_hint(brief, "LLM 提炼")
+        else:
+            fallback = _hotspot_fallback_text(indicators)
+            if fallback:
+                hotspot_hint = _hotspot_hint(fallback, "程序按概念板块核算")
+
     # 1. 各模块章节（LLM，失败用数据表兜底）
     chapters: list[str] = []
     builders = {
@@ -575,6 +683,9 @@ def generate_report(
                     "情绪周期（冰点期/修复期/高潮期/退潮期，带「期」）是市场级阶段，题材运行阶段（启动/发酵/高潮/退潮，裸词）是题材级，本章只用带「期」的市场级阶段词。"
                 ),
             }
+        elif prompt_id == "module.theme" and hotspot_hint:
+            # 题材章节注入热点简报：模型 B 提炼的热点主线，供题材归类/主线判定引用校验
+            kw = {"context": hotspot_hint}
         chapters.append(_module_chapter(prompt_id, title_cn, payload_fn(indicators), indicators, api_key, fallback_fn, **kw))
 
     # 2. 总览（LLM，喂核心数据 + 情绪温度强制引用）
@@ -593,6 +704,7 @@ def generate_report(
             "content": (
                 f"复盘日期：{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}（{_weekday_cn(trade_date)}）\n"
                 f"核心数据：{_compact_json(_headline(indicators))}\n\n"
+                f"{hotspot_hint and hotspot_hint + chr(10) * 2 or ''}"
                 f"请输出「## {OVERVIEW_SECTION}」的正文：1 段情绪定性——必须原样引用程序核算的情绪温度"
                 f"（分数/阶段，见 emotion_score/emotion_stage/emotion_reason），不得另写阶段词；"
                 f"再结合空间板高度与炸板率补充一句话；最后给核心数据一行。"
@@ -619,7 +731,7 @@ def generate_report(
     plan_body = f"（预案生成失败。{plan_rule}）"
     messages = [
         {"role": "system", "content": _plan_system(analyst, plan, strategy, plan_rule)},
-        {"role": "user", "content": _plan_user(trade_date, indicators, strategy, emo_hint)},
+        {"role": "user", "content": _plan_user(trade_date, indicators, strategy, emo_hint, hotspot=hotspot_hint)},
     ]
     try:
         plan_body = chat(messages, api_key=api_key, max_tokens=1500)
