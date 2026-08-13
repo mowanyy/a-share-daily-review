@@ -8,9 +8,22 @@
       个人战法经页面保存后落盘 <code>data/strategies/</code>（gitignored，不入项目）；跑复盘时可选用于驱动「七、次日预案」。
       模板示例（来源=示例）只读，仅作参考。正文建议含 8 节：概述 / 适用情绪阶段 / 选股 / 买入规则 / 卖出与止损 / 仓位管理 / 规避与风险 / 复盘记录。
     </p>
+    <button class="btn" id="btnImport">导入 SKILL.md</button>
     <button class="btn primary" id="btnNew">新增战法</button>
   </div>
   <div id="list" style="margin-top:12px"></div>
+</div>
+
+<div class="panel" id="skillImport" hidden>
+  <h2>导入 SKILL.md 为战法</h2>
+  <p class="muted">粘贴 ZCode skill 的 SKILL.md 内容（front-matter 需含 name；description 用于生成适用阶段）。
+    正文原样保留，若缺战法 8 节会在列表里提示，导入后可在下方编辑补全。</p>
+  <textarea id="skillBody" placeholder="---&#10;name: 深度价值-张坤型&#10;description: 以「深度价值」风格分析 A 股个股/板块。&#10;---&#10;&#10;## 风格画像&#10;..."></textarea>
+  <div class="row" style="margin-top:10px">
+    <button class="btn primary" id="btnImportDo">导入</button>
+    <button class="btn" id="btnImportCancel">取消</button>
+    <span class="muted" id="skillMsg"></span>
+  </div>
 </div>
 
 <div class="panel" id="editor" hidden>
@@ -52,6 +65,7 @@ function renderItems(items){
     var src = s.source === 'tracked'
       ? '<span class="badge tracked">示例（只读）</span>' : '';
     var ops = '';
+    ops += '<button class="btn" data-exp="' + esc(s.id) + '">导出 SKILL.md</button> ';
     if(s.source === 'user'){
       ops += '<button class="btn" data-tog="' + esc(s.id) + '" data-st="' + esc(s.status) + '">'
           + (s.status === 'active' ? '停用' : '启用') + '</button> ';
@@ -88,10 +102,47 @@ function openEditor(s, isNew){
   editor.hidden = false;
   document.getElementById('edName').focus();
 }
+function downloadText(text, filename){
+  var blob = new Blob([text], {type:'text/markdown;charset=utf-8'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+function openImport(){
+  document.getElementById('skillBody').value = '';
+  document.getElementById('skillMsg').textContent = '';
+  document.getElementById('skillImport').hidden = false;
+  document.getElementById('skillBody').focus();
+}
 document.getElementById('btnNew').onclick = function(){ openEditor({}, true); };
 document.getElementById('btnCancel').onclick = function(){ editor.hidden = true; };
+document.getElementById('btnImport').onclick = openImport;
+document.getElementById('btnImportCancel').onclick = function(){ document.getElementById('skillImport').hidden = true; };
+document.getElementById('btnImportDo').onclick = function(){
+  var md = document.getElementById('skillBody').value;
+  if(!md.trim()){ alert('请先粘贴 SKILL.md 内容'); return; }
+  var msg = document.getElementById('skillMsg');
+  msg.textContent = '导入中…';
+  api('/api/strategies/import-skill', {method:'POST', body:JSON.stringify({markdown: md})})
+    .then(function(d){
+      msg.textContent = '已导入：' + d.name + '（缺节：' + (d.missing_sections.length ? d.missing_sections.join('、') : '无')
+        + '）。可在下方编辑补全正文。';
+      document.getElementById('skillImport').hidden = true;
+      load();
+    })
+    .catch(function(e){ msg.textContent = ''; alert(e.message); });
+};
 listEl.addEventListener('click', function(ev){
   var t = ev.target;
+  if(t.dataset.exp){
+    api('/api/strategies/' + t.dataset.exp + '/export-skill')
+      .then(function(d){ downloadText(d.skill_markdown, d.strategy_id + '.skill.md'); })
+      .catch(function(e){ alert(e.message); });
+  }
   if(t.dataset.edit){
     api('/api/strategies/' + t.dataset.edit)
       .then(function(s){ openEditor(s, false); })

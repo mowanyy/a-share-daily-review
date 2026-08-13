@@ -80,6 +80,18 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      零改动复用）；Web 新增 /api/review/history 与 /api/review/history/<date>，
 	      review.html 加「历史报告」日期下拉 + 查看。零改动生成逻辑，日期正则 +
 	      resolve 防路径穿越。268 测试通过。
+	v0.17：战法 ↔ SKILL.md 双向桥 + 基金风格 skill 档案——① 新增 web/skill_bridge.py：
+	      import_skill 把外部 SKILL.md 一键转成个人战法（复用 strategy.create/make_id 链路，
+	      id=strategy.user-<sha256(name)[:10]>、正文原样保留、缺节告警不拒绝），
+	      export_strategy 把战法（tracked/user 均可）导出为 SKILL.md（name+description+正文），
+	      Web 战法管理页加「导入 SKILL.md」面板与每行「导出 SKILL.md」下载按钮，路由
+	      /api/strategies/import-skill 与 /api/strategies/<id>/export-skill，CLI 新增
+	      skill import/export 子命令。② 项目内新增 skills/fund-styles/ 4 个基金风格档案
+	      （深度价值张坤型/景气成长刘格菘型/低估值丘栋荣型/医药成长葛兰型：风格画像→
+	      可判定指标清单→选股规则→买卖持有纪律→反例→输出格式），仅供本项目使用
+	      （不同于复盘的短线战法逻辑，可作独立分析视角；可一键导入战法库再改写）；
+	      kb/corpus.py 收录 skills/** 供问答检索；配套 docs/基金风格skill使用说明.md。
+	      282 测试通过。
 """
 
-__version__ = "0.16.0"
+__version__ = "0.17.0"

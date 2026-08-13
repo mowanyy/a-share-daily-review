@@ -21,6 +21,7 @@ import argparse
 import sys
 import webbrowser
 from datetime import datetime
+from pathlib import Path
 
 from daily_review.config import get_settings
 from daily_review.data import eastmoney, eastmoney_pool, repo, sina
@@ -371,6 +372,42 @@ def _cmd_split_pool(args) -> None:
     return 0
 
 
+def _cmd_skill(args) -> None:
+    """战法 ↔ SKILL.md 桥：import 把 SKILL.md 转成个人战法；export 把战法导出为 SKILL.md。"""
+    from daily_review.web.skill_bridge import export_strategy, import_skill
+    from daily_review.web.strategy import StrategyError, user_dir
+
+    if args.action == "import":
+        p = Path(args.file).resolve()
+        if not p.exists():
+            print(f"[skill] 文件不存在: {p}")
+            return 1
+        try:
+            result = import_skill(p.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            print(f"[skill] 导入失败：{exc}")
+            return 1
+        print(f"[skill] 已导入为战法: {result['name']}（{result['id']}）")
+        print(f"[skill] 落盘: {user_dir()}")
+        if result["missing_sections"]:
+            print(f"[skill] 缺节（不影响执行，建议 Web 编辑补全）: {'、'.join(result['missing_sections'])}")
+        return 0
+
+    try:
+        skill_md = export_strategy(args.strategy_id)
+    except StrategyError as exc:
+        print(f"[skill] 导出失败：{exc}")
+        return 1
+    if args.out:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(skill_md, encoding="utf-8")
+        print(f"[skill] 已导出: {out.resolve()}")
+    else:
+        print(skill_md)
+    return 0
+
+
 def _cmd_web(args) -> None:
     from daily_review.web.app import create_app
 
@@ -532,6 +569,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--src", default="", help="源 CSV 路径（缺省为项目根目录 供选股数据.csv）"
     )
     p_split.set_defaults(func=_cmd_split_pool)
+
+    p_skill = sub.add_parser(
+        "skill",
+        help="战法 ↔ SKILL.md 桥：import 把 SKILL.md 转成个人战法；export 把战法导出为 SKILL.md",
+    )
+    skill_sub = p_skill.add_subparsers(dest="action", required=True)
+    p_skill_import = skill_sub.add_parser("import", help="导入 SKILL.md 为个人战法")
+    p_skill_import.add_argument("file", help="SKILL.md 文件路径")
+    p_skill_import.set_defaults(func=_cmd_skill, action="import")
+    p_skill_export = skill_sub.add_parser("export", help="导出战法为 SKILL.md 文本")
+    p_skill_export.add_argument("strategy_id", help="战法 ID（如 strategy.user-xxx）")
+    p_skill_export.add_argument("--out", default="", help="输出文件路径；缺省打印到控制台")
+    p_skill_export.set_defaults(func=_cmd_skill, action="export")
 
     p_dash = sub.add_parser(
         "dashboard",

@@ -153,6 +153,35 @@ def api_set_strategy_status(strategy_id: str):
     return jsonify(to_dict(pr))
 
 
+@api_bp.post("/api/strategies/import-skill")
+def api_import_skill():
+    """导入 SKILL.md 为个人战法（v0.17 战法↔skill 桥）。"""
+    from daily_review.web.skill_bridge import import_skill
+
+    data = request.get_json(silent=True) or {}
+    markdown = str(data.get("markdown", "")).strip()
+    if not markdown:
+        return jsonify({"error": "缺少 SKILL.md 内容"}), 400
+    try:
+        result = import_skill(markdown, status=str(data.get("status", "draft")))
+    except (ValueError, StrategyError) as exc:
+        code = exc.code if isinstance(exc, StrategyError) else 400
+        return jsonify({"error": str(exc)}), code
+    return jsonify(result), 201
+
+
+@api_bp.get("/api/strategies/<strategy_id>/export-skill")
+def api_export_skill(strategy_id: str):
+    """导出战法为 SKILL.md 文本（tracked/示例与用户战法均支持）。"""
+    from daily_review.web.skill_bridge import export_strategy
+
+    try:
+        skill_markdown = export_strategy(strategy_id)
+    except StrategyError as exc:
+        return jsonify({"error": str(exc)}), exc.code
+    return jsonify({"strategy_id": strategy_id, "skill_markdown": skill_markdown})
+
+
 # ---------------------------------------------------------------- 复盘 API
 
 

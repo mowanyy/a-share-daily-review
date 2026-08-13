@@ -2,7 +2,7 @@
 
 源：prompts/**/*.md（跳过 INDEX.md）+ docs/{需求分析,数据结构,战法规范}.md +
     knowledge/**/*.md（用户持续更新的知识目录）+ data/strategies/**/*.md（用户上传的个人战法）+
-    可选 output/*_复盘.md（带日期标签）。
+    skills/**/*.md（项目内 skill 档案，基金风格等）+ 可选 output/*_复盘.md（带日期标签）。
 
 切块规则：
 - 按 `##`/`###` 标题切分，章节路径作为 section（可展示出处）
@@ -84,6 +84,11 @@ def discover_sources(root: Path | None = None, *, include_output_reports: bool =
     strat_dir = root / "data" / "strategies"
     if strat_dir.exists():
         paths.extend(sorted(strat_dir.rglob("*.md")))
+
+    # 项目内 skill 档案（skills/，v0.17，git 入库）——并入知识库，QA 可检索风格档案
+    skills_dir = root / "skills"
+    if skills_dir.exists():
+        paths.extend(sorted(skills_dir.rglob("*.md")))
 
     if include_output_reports:
         out_dir = root / "output"

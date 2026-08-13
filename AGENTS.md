@@ -9,6 +9,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.17.0`：**战法 ↔ SKILL.md 双向桥 + 基金风格 skill 档案（仅限本项目内）**——① 新增 `web/skill_bridge.py`：`import_skill()` 把外部 SKILL.md 一键转成个人战法（复用 `strategy.create()`/`make_id()` 链路，id=`strategy.user-<sha256(name)[:10]>`、正文原样保留、缺节走现有 `validate()` 告警不拒绝、`applies_to` 取 description 首句）；`export_strategy()` 把战法（tracked 模板/示例与 user 战法均可）导出为 SKILL.md（`name` + 自动生成 `description` + 正文原样）。Web 战法管理页新增「导入 SKILL.md」粘贴面板与每行「导出 SKILL.md」下载按钮（`POST /api/strategies/import-skill`、`GET /api/strategies/<id>/export-skill`）；CLI 新增 `skill import <file.md>` / `skill export <id> [--out]` 子命令。② 项目内新增 `skills/fund-styles/` 4 个基金风格档案（深度价值张坤型 / 景气成长刘格菘型 / 低估值丘栋荣型 / 医药成长葛兰型：风格画像→可判定指标清单→选股→买卖持有纪律→反例→输出格式），**供本项目独立分析视角使用**（中长线逻辑，区别于超短连板战法；可导入战法库后改写成短线规则再驱动预案）；`kb/corpus.py` 收录 `skills/**` 供问答检索；配套 `docs/基金风格skill使用说明.md`。**skill 只放项目内、不入用户级目录。** 282 测试通过。
+
 `v0.16.0`：**复盘报告持久化查询——历史报告档案已可用**——复盘/隔夜预案/开盘策略每次生成已落盘 `output/{date}_*.md`，但此前 Web 只查进程内存的 `JobState.report_html`，**重启 Web 后旧报告看不到、需重新生成**，不利多日复盘挖掘因子。本版对照数据看板文件读回模式（`output/{date}_看板.html` 复用）新增 `web/history.py`：`list_reports()` 扫描 `output/` 识别四种产物（复盘/隔夜预案/开盘策略/看板，按日倒序返回 `has_*` 标记）、`load_report(date)` 读回该日复盘 md → `md_to_html()` 全文 + `section_html()` 提取「七、次日预案」章节，返回结构与 `JobState.to_dict()` 兼容（前端 `showResult` 零改动复用）。Web 新增 `GET /api/review/history`（日期列表）与 `GET /api/review/history/<date>`（该日报告详情，无文件 404）；`review.html` 控制面板新增「历史报告」日期下拉 + 查看按钮。**零改动生成逻辑**（reporter/jobs/pipeline 不动），日期正则 + `resolve().is_relative_to` 防路径穿越。268 测试通过。
 
 `v0.15.1`：**Web 工作台移动端适配（保留）+ 局域网访问（已回退）**——① 移动端适配：`base.html` 全局媒体查询（≤767px 单列布局、导航紧凑/表单堆叠/按钮触控优化/表格可横滑 `.table-wrap`），`dashboard.py` 自包含看板适配手机端（KPI 网格列宽/字号缩放/`#trend-summary` `#emotion-comp` 加 `overflow-x:auto`），`review.html`/`concepts.html` 页面微调；新增设计规范文档 `docs/移动端适配方案.md`（9 章：设计原则/断点体系/组件规范/CSS 模式/测试方法）。② v0.15.0 曾实现 `web --lan` 快捷参数 + 启动器「局域网访问」复选框，**因当前处于公司网络、不使用网络分享，v0.15.1 已全部回退**：cli.py 移除 `--lan`、launcher.py `build_web_argv` 还原固定 `127.0.0.1`、launcher_gui.py 移除复选框；`--host` 参数保留（默认 `127.0.0.1` 仅本机，无认证不对外暴露）。257 测试通过。
@@ -55,6 +57,9 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa --ask "什么是炸板率？" --no-embedding
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review qa --setup          # 安装向量检索依赖+下载 bge 模型
+# 战法 ↔ SKILL.md 双向桥（import 外部 skill 转成战法；export 战法导出为 SKILL.md）
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review skill import skills/fund-styles/深度价值-张坤型.md
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review skill export strategy.user-xxx --out out.skill.md
 # 图形启动器（tkinter 窗口；双击根目录 启动.bat 或桌面快捷方式同效；--dry-run 自检不弹窗）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch --dry-run
@@ -74,6 +79,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `prompts/glossary/术语表.md` | 超短术语统一语义 | 写 prompt / 判定术语时 |
 | `src/daily_review/` | Python 包（采集层 `data/` + 指标层 `analysis/`（含 `auction.py` 竞价）+ LLM 层 `llm/`（含 `premarket.py` 盘前）+ 问答知识库 `kb/` + 数据看板 `dashboard.py` + Web 工作台 `web/`（app/routes/strategy/jobs/md/templates）+ 图形启动器 `launcher.py`/`launcher_gui.py` + 管道 `pipeline.py`） | 实现阶段 |
 | `knowledge/` | 个人短线知识库（`.md` 自动入库，增量重索引持续更新；含 `README.md` 说明） | 用户维护 |
+| `skills/fund-styles/` | 基金风格 skill 档案（v0.17，仅本项目内用；`kb/corpus.py` 收录供问答检索） | 做风格分析 / 导入为战法时 |
 | `AGENTS.md` / `CLAUDE.md` | AI 协作者总索引（本文件，两处同步维护） | 每次会话开始必读 |
 
 ## 工作流约定
