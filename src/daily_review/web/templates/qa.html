@@ -23,25 +23,24 @@
   <div style="flex:1;min-width:0">
     <div class="panel">
       <h2 style="margin-top:0">基金经理分析</h2>
-      <p class="muted">
-        独立风格 agent：选一位基金经理与 K 线周期，输入问题（可带 6 位股票代码），
-        按其档案规则用周K/月K 分析（周一→周K、每月1号→月K，不用日K；数据不足会明说）。
-      </p>
-      <label>基金经理</label>
-      <select id="fmSelect"></select>
-      <div class="muted" id="fmDesc" style="margin-top:4px"></div>
-      <label>K线周期</label>
-      <select id="fmKlt">
-        <option value="102">周K（每周一）</option>
-        <option value="103">月K（每月1号）</option>
-      </select>
-      <label>问题</label>
+      <p class="muted">独立风格 agent，带上下文记忆 + 中军自动识别（从涨停池按市值取大市值股）。</p>
       <div class="row">
-        <input type="text" id="fmQ" style="flex:1" placeholder="例：分析 600519 的估值分位与买入时机（可含 6 位代码）">
+        <select id="fmSelect" style="flex:1"></select>
+        <select id="fmKlt" style="flex:0 0 90px">
+          <option value="102">周K（每周一）</option>
+          <option value="103">月K（每月1号）</option>
+        </select>
+      </div>
+      <div class="muted" id="fmDesc" style="margin-top:4px"></div>
+      <div class="muted" id="fmZhongjun" style="margin-top:2px;color:var(--down)">中军：待分析</div>
+      <div id="fmHistory" style="max-height:420px;overflow-y:auto;margin:8px 0;
+        border:1px solid var(--border);border-radius:8px;padding:8px"></div>
+      <div class="row">
+        <input type="text" id="fmQ" style="flex:1" placeholder="例：分析 600519 的估值分位（可自动注入中军周K数据）">
         <button class="btn primary" id="fmAsk">分析</button>
+        <button class="btn" id="fmClear">清空记忆</button>
       </div>
       <div class="muted" id="fmNotes" style="margin-top:8px"></div>
-      <div id="fmAnswer" style="margin-top:10px"></div>
     </div>
   </div>
 </div>
@@ -82,11 +81,53 @@ document.getElementById('q').addEventListener('keydown', function(ev){
 });
 document.getElementById('q').focus();
 
-/* ---------- 基金经理分析 ---------- */
+/* ---------- 基金经理分析（v0.19：上下文 + 中军 + 历史对话） ---------- */
+var fmHistory = [];  // [{user, answer_html, data_notes, error}]
+var fmManagerId = '';
+
 function showManagerDesc(){
   var sel = document.getElementById('fmSelect');
   var opt = sel.options[sel.selectedIndex];
   document.getElementById('fmDesc').textContent = opt && opt.dataset.desc ? opt.dataset.desc : '';
+}
+function renderZhongjun(zj){
+  if(!zj || !zj.length){
+    document.getElementById('fmZhongjun').textContent = '中军：待分析（需先跑复盘采集涨停数据）';
+    return;
+  }
+  document.getElementById('fmZhongjun').textContent = '中军：' + zj.map(function(e){
+    var cap = e.market_cap ? (e.market_cap / 1e8).toFixed(1) + '亿' : '?';
+    return esc(e.code) + ' ' + esc(e.name) + '(' + esc(e.theme_name) + '，' + cap + ')';
+  }).join(' · ');
+}
+function renderFmHistory(){
+  var el = document.getElementById('fmHistory');
+  if(!fmHistory.length){
+    el.innerHTML = '<span class="muted">暂无对话，开始提问吧。</span>';
+    return;
+  }
+  el.innerHTML = fmHistory.map(function(h, i){
+    var notes = '';
+    if(h.data_notes && h.data_notes.length){
+      notes = '<div class="muted" style="margin:2px 0">' + esc(h.data_notes.join(' · ')) + '</div>';
+    }
+    if(h.error){ notes += '<div class="err">LLM 异常：' + esc(h.error) + '</div>'; }
+    return '<div style="margin-bottom:10px;border-bottom:1px solid var(--border);padding-bottom:8px">'
+      + '<div style="margin-bottom:4px"><strong>你：</strong>' + esc(h.user) + '</div>'
+      + '<div><strong>agent：</strong>' + (h.answer_html || esc(h.answer)) + '</div>'
+      + notes + '</div>';
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+function loadFmSession(){
+  var mid = document.getElementById('fmSelect').value;
+  if(!mid) return;
+  fmManagerId = mid;
+  api('/api/fund/session/' + mid)
+    .then(function(d){
+      renderZhongjun(d.zhongjun || []);
+    })
+    .catch(function(){});
 }
 function loadManagers(){
   api('/api/fund/managers')
@@ -96,9 +137,9 @@ function loadManagers(){
         return '<option value="' + esc(m.id) + '" data-desc="' + esc(m.description) + '">'
           + esc(m.name) + '</option>';
       }).join('');
-      if(sel.options.length) showManagerDesc();
+      if(sel.options.length){ showManagerDesc(); loadFmSession(); }
     })
-    .catch(function(){ /* 面板留空即可 */ });
+    .catch(function(){});
 }
 function fundAsk(){
   var q = document.getElementById('fmQ').value.trim();
@@ -107,27 +148,51 @@ function fundAsk(){
   if(!q){ alert('请输入问题'); return; }
   var klt = document.getElementById('fmKlt').value;
   document.getElementById('fmAsk').disabled = true;
-  document.getElementById('fmAnswer').innerHTML = '<span class="muted">思考中…</span>';
   document.getElementById('fmNotes').textContent = '';
-  api('/api/fund/analyze', {method:'POST', body:JSON.stringify({manager_id: mid, question: q, klt: Number(klt)})})
+  api('/api/fund/analyze', {
+    method:'POST',
+    body:JSON.stringify({manager_id: mid, question: q, klt: Number(klt), trade_date: ''})
+  })
     .then(function(d){
-      document.getElementById('fmAnswer').innerHTML = d.answer_html || esc(d.answer);
+      document.getElementById('fmQ').value = '';
+      renderZhongjun(d.zhongjun || []);
+      fmHistory.push({
+        user: q,
+        answer_html: d.answer_html || esc(d.answer),
+        data_notes: d.data_notes || [],
+        error: d.error || ''
+      });
+      renderFmHistory();
       var txt = (d.data_notes || []).join(' · ');
       if(d.error){ txt = (txt ? txt + ' · ' : '') + 'LLM 异常：' + d.error; }
       document.getElementById('fmNotes').textContent = txt;
       document.getElementById('fmAsk').disabled = false;
     })
     .catch(function(e){
-      document.getElementById('fmAnswer').textContent = '';
       alert(e.message);
       document.getElementById('fmAsk').disabled = false;
     });
+}
+function fundClear(){
+  if(!fmManagerId) return;
+  fmHistory = [];
+  document.getElementById('fmHistory').innerHTML = '<span class="muted">暂无对话，开始提问吧。</span>';
+  document.getElementById('fmNotes').textContent = '';
+  document.getElementById('fmZhongjun').textContent = '中军：待分析';
+  document.getElementById('fmQ').value = '';
+  api('/api/fund/clear/' + fmManagerId, {method:'POST'}).catch(function(){});
 }
 document.getElementById('fmAsk').onclick = fundAsk;
 document.getElementById('fmQ').addEventListener('keydown', function(ev){
   if(ev.key === 'Enter') fundAsk();
 });
-document.getElementById('fmSelect').onchange = showManagerDesc;
+document.getElementById('fmClear').onclick = fundClear;
+document.getElementById('fmSelect').onchange = function(){
+  showManagerDesc();
+  fmHistory = [];
+  loadFmSession();
+  renderFmHistory();
+};
 loadManagers();
 </script>
 {% endblock %}

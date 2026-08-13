@@ -375,7 +375,7 @@ def api_fund_managers():
 
 @api_bp.post("/api/fund/analyze")
 def api_fund_analyze():
-    """基金经理分析 agent：按所选风格 + 周K/月K 数据回复。未知经理 404，参数错 400。"""
+    """基金经理分析 agent（v0.19：上下文记忆 + 中军自动识别）。"""
     from daily_review.web.fund_agent import ManagerNotFound, analyze as fund_analyze
 
     data = request.get_json(silent=True) or {}
@@ -389,8 +389,9 @@ def api_fund_analyze():
         klt = int(data.get("klt", 102) or 102)
     except (TypeError, ValueError):
         return jsonify({"error": "klt 需为 102(周K) 或 103(月K)"}), 400
+    trade_date = str(data.get("trade_date", "")).strip() or None
     try:
-        result = fund_analyze(manager_id, question, klt=klt)
+        result = fund_analyze(manager_id, question, klt=klt, trade_date=trade_date)
     except ManagerNotFound as exc:
         return jsonify({"error": str(exc)}), 404
     except ValueError as exc:
@@ -401,8 +402,27 @@ def api_fund_analyze():
             "answer_html": md_to_html(result["answer"]),
             "data_notes": result["data_notes"],
             "error": result["error"],
+            "history_length": result["history_length"],
+            "zhongjun": result["zhongjun"],
         }
     )
+
+
+@api_bp.post("/api/fund/clear/<manager_id>")
+def api_fund_clear(manager_id: str):
+    """清空该基金经理的会话历史与中军跟踪。"""
+    from daily_review.web.fund_agent import clear_session
+
+    clear_session(manager_id)
+    return jsonify({"ok": True})
+
+
+@api_bp.get("/api/fund/session/<manager_id>")
+def api_fund_session(manager_id: str):
+    """返回会话信息（history_length, zhongjun, updated_at）。"""
+    from daily_review.web.fund_agent import get_session
+
+    return jsonify(get_session(manager_id))
 
 
 # ---------------------------------------------------------------- 问答 API

@@ -432,3 +432,27 @@ def fetch_stock_industry_map() -> dict[str, str]:
         if len(diff) < 200:
             break
     return result
+
+
+def fetch_market_caps(codes: list[str]) -> dict[str, float]:
+    """批量查询股票总市值（`f20`=总市值，元）。返回 {code: 市值_元}。
+
+    失败抛 ValueError（clist 接口异常）；空列表返回空 dict。
+    """
+    if not codes:
+        return {}
+    unique = sorted({str(c).zfill(6) for c in codes})
+    payload = _clist_json({
+        "pn": 1, "pz": len(unique), "po": 1, "np": 1,
+        "fltt": 2, "invt": 2,
+        "fields": "f12,f20",
+        "fs": ",".join(f"f12:{c}" for c in unique),
+    })
+    diff = (payload.get("data") or {}).get("diff") or []
+    result: dict[str, float] = {}
+    for item in diff:
+        code = str(item.get("f12", "")).strip()
+        cap = item.get("f20")
+        if code and cap is not None:
+            result[code] = float(cap)
+    return result

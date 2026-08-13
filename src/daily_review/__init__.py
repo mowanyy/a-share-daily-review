@@ -111,6 +111,18 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      空问题/非法klt 400）；前端面板：基金经理下拉+周K/月K周期下拉+问题输入+分析
 	      按钮（md_to_html 渲染回答，副行显示数据注入说明与异常）。零外链零 CDN。
 	      298 测试通过。
+	v0.19：基金经理 agent 上下文记忆 + 中军自动识别——新增 data/eastmoney_pool.py::
+	      fetch_market_caps（clist 批量查总市值 f20）。web/fund_agent.py 大改：session
+	      持久化到 data/fund_sessions/{manager_id}.json（gitignored data/*/ 已覆盖，
+	      重启不丢上下文）；_ensure_zhongjun 从当日涨停池 CSV 按 industry 分组取市值
+	      最大股作为中军（无 CSV/网络失败→中军为空，不抛异常，agent 仍可正常回答）；
+	      analyze 新增 trade_date 参数，system prompt 末尾追加中军摘要（代码+名称+题材+
+	      市值），上下文保留最近 10 轮对话（超过自动裁剪），LLM 失败保留历史供重试。
+	      Web 新增 POST /api/fund/clear/<manager_id>（清空会话）与 GET /api/fund/
+	      session/<manager_id>（history_length/zhongjun/updated_at）；POST /api/fund/
+	      analyze 回包新增 history_length 与 zhongjun。前端改为聊天式界面：滚动历史
+	      对话区（每轮 user+agent 可回溯）、清空记忆按钮、实时显示中军信息（来自涨停池
+	      自动识别）。零外链零 CDN。309 测试通过。
 """
 
-__version__ = "0.18.0"
+__version__ = "0.19.0"
