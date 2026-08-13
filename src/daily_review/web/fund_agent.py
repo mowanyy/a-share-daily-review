@@ -1,8 +1,9 @@
-"""基金经理分析 agent（v0.19）：上下文记忆 + 中军自动识别 + 风格分析。
+"""基金经理分析 agent（v0.20）：上下文记忆 + 中军自动识别 + 风格分析 + 跨 Agent 通信。
 
 - `list_managers()` / `get_manager(id)`：读取 `skills/fund-styles/*.md` 档案。
 - `analyze(manager_id, question, *, klt, trade_date)`：按所选风格档案 + 上下文 +
-  自动识别的中军（大市值涨停股）+ 周K/月K 数据，单次 `chat` 回复。
+  自动识别的中军（大市值涨停股）+ 周K/月K 数据，`chat_tools` 回复，支持 `query_qa` 工具
+  （v0.20：向 QA Agent 查询市场概况）。
 - `clear_session(manager_id)`：清空该经理的对话历史与中军跟踪。
 - `get_session(manager_id)`：返回当前会话信息（history_length, zhongjun, updated_at）。
 
@@ -18,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 
 from daily_review.config import get_settings
+from daily_review.llm.client import chat_tools
+from daily_review.llm.reporter import _compact_json
 from daily_review.prompts import _FRONT_MATTER_RE, _parse_front_matter
 
 # 基金经理档案目录
@@ -323,6 +326,43 @@ def _build_messages(
     return messages
 
 
+# ---------------------------------------------------------------- query_qa 工具（v0.20）
+
+_QA_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "query_qa",
+        "description": "向知识问答 Agent 查询 A 股短线市场数据，如情绪温度、涨停家数、题材资金流等。获取当前市场概况后可用于辅助风格分析。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "查询问题，如「今日市场情绪如何？涨停家数？主要题材？」",
+                },
+            },
+            "required": ["question"],
+        },
+    },
+}
+
+_MAX_TOOL_ROUNDS = 3  # 基金经理 tool 循环上限
+
+
+def _execute_query_qa(args: dict) -> str:
+    """执行 query_qa 工具：调用 QA Agent 并返回回答。"""
+    question = str(args.get("question") or "").strip()
+    if not question:
+        return _compact_json({"error": "问题不能为空"})
+    try:
+        from daily_review.web.agent_registry import call_agent
+
+        answer = call_agent("qa_general", question)
+        return _compact_json({"answer": answer})
+    except Exception as exc:
+        return _compact_json({"error": f"调用 QA Agent 失败：{exc}"})
+
+
 # ---------------------------------------------------------------- agent
 
 
@@ -335,9 +375,10 @@ def analyze(
 ) -> dict:
     """按基金经理风格 + 上下文 + 中军数据 + 周K/月K 分析，返回 {answer, data_notes, error, history_length, zhongjun}。
 
+    支持 query_qa 工具调用（v0.20）：基金经理可向 QA Agent 查询市场概况。
     参数/未知经理抛 ValueError（ManagerNotFound → 404）。
     """
-    from daily_review.llm.client import LLMError, chat
+    from daily_review.llm.client import LLMError
 
     question = (question or "").strip()
     if not question:
@@ -359,12 +400,11 @@ def analyze(
     # 数据注入
     data_text, data_notes = _fetch_data(_extract_codes(question), klt=klt)
 
-    # 构建消息 + 调用 LLM
+    # 构建消息 + 调用 LLM（v0.20：chat → chat_tools，支持 query_qa 工具）
     messages = _build_messages(session, question, manager, body, cycle, klt, zhongjun, data_text)
     try:
-        answer = chat(messages)
-        error = ""
-        # 记录历史
+        answer, error = _run_tool_loop(messages, cycle)
+        # 记录历史（只记录 user/assistant，不记录工具调用中间消息）
         session["messages"].append({"role": "user", "content": question, "timestamp": datetime.now().isoformat()})
         session["messages"].append({"role": "assistant", "content": answer, "timestamp": datetime.now().isoformat()})
         # 裁剪历史：保留最近 _HISTORY_MAX_ROUNDS 轮
@@ -383,3 +423,27 @@ def analyze(
         "history_length": len([m for m in session["messages"] if m["role"] == "user"]),
         "zhongjun": session["meta"].get("zhongjun", []),
     }
+
+
+def _run_tool_loop(messages: list[dict], cycle: str) -> tuple[str, str]:
+    """工具循环：chat_tools → 若调用 query_qa 则执行并回传结果 → 再问，最多 3 轮。"""
+    error = ""
+    for _round in range(_MAX_TOOL_ROUNDS):
+        result = chat_tools(messages, tools=[_QA_TOOL_SCHEMA], tool_choice="auto")
+        if not result.tool_calls:
+            return (result.content or "", error)
+        # 执行工具调用
+        assistant_msg: dict = {
+            "role": "assistant",
+            "content": result.content,
+            "tool_calls": result.raw_tool_calls or [],
+        }
+        if result.reasoning_content:
+            assistant_msg["reasoning_content"] = result.reasoning_content
+        messages.append(assistant_msg)
+        for tc in result.tool_calls:
+            tool_result = _execute_query_qa(tc.arguments)
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": tool_result})
+    # 超限：取最后一次 content
+    last = chat_tools(messages, tools=[_QA_TOOL_SCHEMA], tool_choice="auto")
+    return (last.content or "", f"（已达 {_MAX_TOOL_ROUNDS} 轮工具调用上限）")

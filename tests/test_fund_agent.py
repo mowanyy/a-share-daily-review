@@ -31,16 +31,24 @@ def app():
     return app
 
 
+def _chat_result(answer: str):
+    """构造一个无工具调用的 ChatResult。"""
+    from daily_review.llm.client import ChatResult
+
+    return ChatResult(content=answer, tool_calls=[], finish_reason="stop", reasoning_content=None, raw_tool_calls=None)
+
+
 def _patch_llm(monkeypatch, answer: str = "按该风格，周K 趋势向上。"):
-    from daily_review.llm import client as llm_client
+    """Mock fund_agent.chat_tools（v0.20：analyze 改用 chat_tools）。"""
+    import daily_review.web.fund_agent as fa
 
     captured: dict = {}
 
-    def fake_chat(messages, **kw):
+    def fake_chat_tools(messages, **kw):
         captured["messages"] = messages
-        return answer
+        return _chat_result(answer)
 
-    monkeypatch.setattr(llm_client, "chat", fake_chat)
+    monkeypatch.setattr(fa, "chat_tools", fake_chat_tools)
     return captured
 
 
@@ -140,12 +148,12 @@ def test_analyze_no_code_skips_fetch(monkeypatch):
 
 def test_analyze_llm_error(monkeypatch):
     import daily_review.web.fund_agent as fa
-    from daily_review.llm import client as llm_client
+    from daily_review.llm.client import LLMError
 
     def boom(*a, **kw):
         raise LLMError("限流")
 
-    monkeypatch.setattr(llm_client, "chat", boom)
+    monkeypatch.setattr(fa, "chat_tools", boom)
     result = fa.analyze(MANAGER, "600519 怎么样", klt=102)
     assert result["error"]                                  # 非空
     assert "LLM 调用失败" in result["answer"]
@@ -184,10 +192,11 @@ def test_api_fund_managers(app):
 
 def test_api_fund_analyze(app, monkeypatch):
     from daily_review.data import eastmoney
-    from daily_review.llm import client as llm_client
 
     monkeypatch.setattr(eastmoney, "fetch_kline", lambda code, **kw: _KLINE_DF)
-    monkeypatch.setattr(llm_client, "chat", lambda messages, **kw: "**结论**：周K 买入区间。")
+    import daily_review.web.fund_agent as fa
+
+    monkeypatch.setattr(fa, "chat_tools", lambda messages, **kw: _chat_result("**结论**：周K 买入区间。"))
 
     r = app.test_client().post(
         "/api/fund/analyze",

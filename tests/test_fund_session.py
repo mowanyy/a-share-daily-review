@@ -59,10 +59,18 @@ def app(setup, request):
     return a
 
 
-def _patch_chat(monkeypatch, answer: str = "按该风格，中军趋势偏多。"):
-    from daily_review.llm import client as llm_client
+def _chat_result(answer: str):
+    """构造一个无工具调用的 ChatResult。"""
+    from daily_review.llm.client import ChatResult
 
-    monkeypatch.setattr(llm_client, "chat", lambda messages, **kw: answer)
+    return ChatResult(content=answer, tool_calls=[], finish_reason="stop", reasoning_content=None, raw_tool_calls=None)
+
+
+def _patch_chat(monkeypatch, answer: str = "按该风格，中军趋势偏多。"):
+    """Mock fund_agent.chat_tools（v0.20：analyze 改用 chat_tools）。"""
+    import daily_review.web.fund_agent as fa
+
+    monkeypatch.setattr(fa, "chat_tools", lambda messages, **kw: _chat_result(answer))
 
 
 def _patch_data(monkeypatch, *, zt_df=None, caps=None, kline_df=None):
@@ -203,10 +211,10 @@ def test_analyze_history_trim(monkeypatch, setup):
 def test_analyze_llm_error(monkeypatch, setup):
     """LLM 失败 → error 字段，历史保留。"""
     import daily_review.web.fund_agent as fa
-    from daily_review.llm import client as llm_client
+    from daily_review.llm.client import LLMError
 
     _patch_data(monkeypatch, zt_df=ZT_DF, caps=MARKET_CAPS, kline_df=_KLINE_DF)
-    monkeypatch.setattr(llm_client, "chat", lambda *a, **kw: (_ for _ in ()).throw(LLMError("限流")))
+    monkeypatch.setattr(fa, "chat_tools", lambda *a, **kw: (_ for _ in ()).throw(LLMError("限流")))
 
     r = fa.analyze(MANAGER, "分析 600519", klt=102, trade_date="20260813")
     assert r["error"]

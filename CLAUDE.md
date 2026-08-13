@@ -4,9 +4,11 @@
 
 ## 项目一句话
 
-A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化分析（连板梯队 / 题材运行周期 / 炸板净流入 / 龙虎榜游资）→ LLM 生成 Markdown 复盘文档，并支持问答；未来支持用户**个人战法**驱动的**次日预案**。
+A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化分析（连板梯队 / 题材运行周期 / 炸板净流入 / 龙虎榜游资 / 情绪温度）→ LLM 生成 Markdown 复盘文档；**复盘三时段**：盘后复盘（17:00 后）→ 隔夜预案（9:00 前，消息面）→ 开盘策略（9:25-9:30，竞价筛选个股）；支持问答、个人战法驱动的次日预案与**多 Agent 通信**（QA ↔ 基金经理互相提问 + 多专家会诊）。
 
 ## 当前阶段（重要）
+
+`v0.20.0`：**多 Agent 通信框架（互相提问 + 多专家会诊）**——新增 `web/agent_registry.py`：Agent 统一注册中心（`register()`/`list_agents()`/`call_agent()`），模块导入时自动注册 6+ 个 Agent（`qa_general` 知识问答 / `fund_张坤`·`fund_刘格菘`·`fund_丘栋荣`·`fund_葛兰` 基金经理 / `hotspot_brief` 热点简报）。**① QA → 基金经理**：QA 的 function-calling 工具新增 `query_agent`（`kb/tools.py`，可指定 agent_id 调用其他 Agent，schema 契约同步 `tool.datatools` v0.3.0 13 个工具）；**② 基金经理 → QA**：`fund_agent.analyze` 由 `chat()` 改为 `chat_tools()`，新增 `query_qa` 工具（可向 QA Agent 查市场概况），支持最多 3 轮工具循环，session/中军/历史裁剪逻辑不变；**③ 多 Agent 会诊**：Web 新增 `GET /api/agents/list` 与 `POST /api/agents/consult`（选多个 Agent → 顺序调用各自分析 → 合成 LLM `_synthesize_consult` 综合观点，合成失败降级拼接原始观点），问答页底部新增「多 Agent 会诊」面板（勾选 Agent → 输入问题 → 看各观点 + 综合结论）。零外链零 CDN。**326 测试通过**。
 
 `v0.19.0`：**基金经理 agent 上下文记忆 + 中军自动识别**——`eastmoney_pool.py` 新增 `fetch_market_caps`（clist 批量查总市值 `f20`）。`fund_agent.py` 大改：session 持久化到 `data/fund_sessions/{manager_id}.json`（`data/*/` 已 gitignore，重启不丢上下文）；`_ensure_zhongjun` 从当日涨停池 CSV 按 `industry` 分组取市值最大股作为**中军**（无 CSV/网络失败返回空，不抛异常，agent 仍可正常回答）；`analyze` 新增 `trade_date` 参数，system prompt 末尾追加中军摘要（代码 + 名称 + 题材 + 市值），上下文保留最近 10 轮对话（超过自动裁剪），LLM 失败保留历史供重试。Web 新增 `POST /api/fund/clear/<manager_id>`（清空记忆）与 `GET /api/fund/session/<manager_id>`（含 `history_length`/`zhongjun`/`updated_at`）；`POST /api/fund/analyze` 回包新增 `history_length` 与 `zhongjun`。前端改为**聊天式界面**：滚动历史对话区（每轮 user+agent 可回溯）、清空记忆按钮、实时显示中军信息（来自涨停池自动识别）。零外链零 CDN。**309 测试通过**。
 

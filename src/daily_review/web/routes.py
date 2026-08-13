@@ -425,6 +425,80 @@ def api_fund_session(manager_id: str):
     return jsonify(get_session(manager_id))
 
 
+# ---------------------------------------------------------------- 多 Agent 通信 API（v0.20）
+
+
+@api_bp.get("/api/agents/list")
+def api_agents_list():
+    """列出所有已注册 Agent。"""
+    from daily_review.web.agent_registry import list_agents
+
+    return jsonify({"agents": list_agents()})
+
+
+@api_bp.post("/api/agents/consult")
+def api_agents_consult():
+    """多 Agent 会诊：并行调用多个 Agent，综合各方观点。"""
+    from daily_review.web.agent_registry import call_agent, list_agents
+
+    data = request.get_json(silent=True) or {}
+    question = str(data.get("question", "")).strip()
+    agent_ids = data.get("agent_ids", [])
+    if not question:
+        return jsonify({"error": "问题不能为空"}), 400
+    if not agent_ids or not isinstance(agent_ids, list):
+        return jsonify({"error": "请选择至少一个 Agent（agent_ids 列表）"}), 400
+
+    # 去重（保持传入顺序）
+    agent_ids = list(dict.fromkeys(agent_ids))
+
+    # 校验 agent_ids
+    registered = {a["id"] for a in list_agents()}
+    invalid = [a for a in agent_ids if a not in registered]
+    if invalid:
+        return jsonify({"error": f"未知 Agent：{', '.join(invalid)}", "available": sorted(registered)}), 400
+
+    # 顺序调用每个 Agent（不并行，避免 LLM 并发冲突）
+    responses: dict[str, dict] = {}
+    for aid in agent_ids:
+        answer = call_agent(aid, question)
+        responses[aid] = {"answer": answer, "answer_html": md_to_html(answer)}
+
+    # 合成 LLM 调用
+    synthesis = _synthesize_consult(question, responses)
+    synthesis_html = md_to_html(synthesis)
+
+    return jsonify({"responses": responses, "synthesis": synthesis, "synthesis_html": synthesis_html})
+
+
+def _synthesize_consult(question: str, responses: dict[str, dict]) -> str:
+    """综合多个 Agent 的观点，生成最终结论。"""
+    from daily_review.llm.client import chat
+
+    system = (
+        "你是多 Agent 会诊分析师。用户的问题已由多位专家（Agent）分别分析，"
+        "每个专家有各自的投资风格和视角。请综合他们的观点，给出一个全面、客观、结构化的综合结论。\n"
+        "要求：\n"
+        "1. 先指出各专家观点的共同点和分歧点\n"
+        "2. 对不同观点给出你的分析判断\n"
+        "3. 最终给出一个综合性的建议或结论\n"
+        "4. 用中文 Markdown 格式输出，结构清晰\n"
+        "5. 禁止编造数据，只基于下方各专家的回答进行综合"
+    )
+    parts = [f"## 用户问题\n\n{question}\n\n## 各专家观点\n"]
+    for aid, resp in responses.items():
+        parts.append(f"### {aid}\n\n{resp['answer']}\n")
+    user = "\n".join(parts)
+    try:
+        return chat([{"role": "system", "content": system}, {"role": "user", "content": user}])
+    except Exception:
+        # 合成失败 → 直接拼接各专家观点
+        lines = ["### 综合结论\n\n（合成 LLM 调用失败，以下为各专家原始观点）\n"]
+        for aid, resp in responses.items():
+            lines.append(f"---\n### {aid}\n\n{resp['answer']}\n")
+        return "\n".join(lines)
+
+
 # ---------------------------------------------------------------- 问答 API
 
 _index_lock = threading.Lock()

@@ -41,7 +41,7 @@ def test_schemas_match_schema_doc_contract():
     """get_tool_schemas 的 function name 必须与 schema.md 契约一一对应（防漂移）。"""
     text = SCHEMA_PATH.read_text(encoding="utf-8")
     doc_names = re.findall(r"### \d+\. `(\w+)`", text)
-    assert len(doc_names) == 12
+    assert len(doc_names) == 13
     code_names = [s["function"]["name"] for s in get_tool_schemas()]
     assert code_names == doc_names
     assert code_names == TOOL_NAMES

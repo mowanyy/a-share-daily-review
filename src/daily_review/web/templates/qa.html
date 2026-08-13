@@ -44,6 +44,20 @@
     </div>
   </div>
 </div>
+<div class="panel" style="margin-top:16px">
+  <h2 style="margin-top:0">多 Agent 会诊 <span class="muted" style="font-weight:normal;font-size:0.85em">（v0.20：多个 Agent 分别分析，综合观点）</span></h2>
+  <p class="muted">勾选你想咨询的 Agent，系统会分别调用每个 Agent 分析同一问题，然后综合各方观点输出最终结论。</p>
+  <div class="row">
+    <input type="text" id="consultQ" style="flex:1" placeholder="例：如何看待当前 AI 板块？市场情绪如何？">
+    <button class="btn primary" id="btnConsult">会诊</button>
+  </div>
+  <div id="consultAgents" style="margin:8px 0;display:flex;flex-wrap:wrap;gap:6px"></div>
+  <div id="consultResult" hidden>
+    <div id="consultResponses"></div>
+    <div id="consultSynthesis" style="border:1px solid var(--accent);border-radius:8px;padding:12px;margin-top:8px"></div>
+  </div>
+  <div class="muted" id="consultNotes" style="margin-top:4px"></div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -194,5 +208,64 @@ document.getElementById('fmSelect').onchange = function(){
   renderFmHistory();
 };
 loadManagers();
+
+/* ---------- 多 Agent 会诊（v0.20） ---------- */
+function loadConsultAgents(){
+  api('/api/agents/list')
+    .then(function(d){
+      var agents = d.agents || [];
+      var el = document.getElementById('consultAgents');
+      if(!agents.length){
+        el.innerHTML = '<span class="muted">暂无可用 Agent</span>';
+        return;
+      }
+      el.innerHTML = agents.map(function(a){
+        return '<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2)">'
+          + '<input type="checkbox" value="' + esc(a.id) + '" checked>'
+          + esc(a.name) + '<span class="muted" style="font-size:0.85em">' + esc(a.description) + '</span></label>';
+      }).join('');
+    })
+    .catch(function(){});
+}
+function consult(){
+  var q = document.getElementById('consultQ').value.trim();
+  if(!q){ alert('请输入问题'); return; }
+  var checks = document.querySelectorAll('#consultAgents input[type=checkbox]:checked');
+  var agentIds = Array.from(checks).map(function(c){ return c.value; });
+  if(!agentIds.length){ alert('请至少勾选一个 Agent'); return; }
+  document.getElementById('btnConsult').disabled = true;
+  document.getElementById('consultResult').hidden = false;
+  document.getElementById('consultResponses').innerHTML = '<span class="muted">各 Agent 分析中…</span>';
+  document.getElementById('consultSynthesis').innerHTML = '';
+  document.getElementById('consultNotes').textContent = '';
+  api('/api/agents/consult', {
+    method:'POST',
+    body:JSON.stringify({question: q, agent_ids: agentIds})
+  })
+    .then(function(d){
+      var respHtml = '';
+      Object.keys(d.responses || {}).forEach(function(aid){
+        var r = d.responses[aid];
+        respHtml += '<div style="margin:8px 0;padding:8px;border:1px solid var(--border);border-radius:8px">'
+          + '<strong>' + esc(aid) + '</strong> 的分析：<br>'
+          + (r.answer_html || esc(r.answer)) + '</div>';
+      });
+      document.getElementById('consultResponses').innerHTML = respHtml;
+      document.getElementById('consultSynthesis').innerHTML = d.synthesis_html
+        ? '<h3 style="margin:0 0 8px;color:var(--accent)">综合结论</h3>' + d.synthesis_html
+        : esc(d.synthesis || '');
+      document.getElementById('consultNotes').textContent = d.error || '';
+      document.getElementById('btnConsult').disabled = false;
+    })
+    .catch(function(e){
+      alert(e.message);
+      document.getElementById('btnConsult').disabled = false;
+    });
+}
+document.getElementById('btnConsult').onclick = consult;
+document.getElementById('consultQ').addEventListener('keydown', function(ev){
+  if(ev.key === 'Enter') consult();
+});
+loadConsultAgents();
 </script>
 {% endblock %}

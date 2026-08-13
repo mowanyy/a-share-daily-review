@@ -123,6 +123,15 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      analyze 回包新增 history_length 与 zhongjun。前端改为聊天式界面：滚动历史
 	      对话区（每轮 user+agent 可回溯）、清空记忆按钮、实时显示中军信息（来自涨停池
 	      自动识别）。零外链零 CDN。309 测试通过。
+	v0.20：多 Agent 通信框架（互相提问 + 多专家会诊）——新增 web/agent_registry.py：
+	      Agent 统一注册中心（register/list_agents/call_agent），模块导入时自动注册 QA Agent
+	      （qa_general）、基金经理 Agent（fund_张坤/fund_刘格菘/fund_丘栋荣/fund_葛兰）、
+	      热点简报 Agent（hotspot_brief）。QA Agent 的 function-calling 工具新增 query_agent
+	      工具（kb/tools.py），可调用其他 Agent 获取专业分析意见。基金经理 Agent 从 chat()
+	      改为 chat_tools()，新增 query_qa 工具（可向 QA Agent 查询市场概况），支持最多 3 轮
+	      工具循环。新增多 Agent 会诊端点 POST /api/agents/consult（选多个 Agent → 各自分析
+	      → 合成 LLM 综合观点）与 GET /api/agents/list。Web 问答页底部新增「多 Agent 会诊」
+	      面板（勾选 Agent → 输入问题 → 看各观点 + 综合结论）。零外链零 CDN。
 """
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"

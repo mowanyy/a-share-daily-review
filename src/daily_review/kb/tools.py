@@ -259,6 +259,25 @@ def _tool_concept_pool_query(ctx: DataToolContext, args: dict) -> dict:
     return {"name": name, "stock_count": len(stocks), "stocks": stocks}
 
 
+# ---------------------------------------------------------------- 跨 Agent 通信工具（v0.20）
+
+
+def _tool_query_agent(ctx: DataToolContext, args: dict) -> dict:
+    """调用其他 Agent（如基金经理），获取其专业分析意见。"""
+    from daily_review.web.agent_registry import call_agent, list_agents
+
+    agent_id = str(args.get("agent_id") or "").strip()
+    question = str(args.get("question") or "").strip()
+    if not agent_id:
+        available = ", ".join(a["id"] for a in list_agents())
+        return {"error": f"缺少 agent_id 参数。可用 agent：{available}"}
+    if not question:
+        return {"error": "缺少 question 参数"}
+    context = {"trade_date": ctx.default_date, "klt": args.get("klt", 102)}
+    answer = call_agent(agent_id, question, context)
+    return {"agent_id": agent_id, "answer": answer}
+
+
 # 工具名 → 处理器（name 即 function-calling 的 function name）
 _TOOL_HANDLERS: dict[str, callable] = {
     "query_zt_pool": _tool_zt_pool,
@@ -274,6 +293,8 @@ _TOOL_HANDLERS: dict[str, callable] = {
     "concept_pool_remove_stocks": _tool_concept_pool_remove_stocks,
     "concept_pool_list": _tool_concept_pool_list,
     "concept_pool_query": _tool_concept_pool_query,
+    # v0.20 跨 Agent 通信
+    "query_agent": _tool_query_agent,
 }
 
 TOOL_NAMES: list[str] = list(_TOOL_HANDLERS)
@@ -473,6 +494,33 @@ def get_tool_schemas() -> list[dict]:
                         "name": {"type": "string", "description": "概念池名称"},
                     },
                     "required": ["name"],
+                },
+            },
+        },
+        # ---------- v0.20 跨 Agent 通信 ----------
+        {
+            "type": "function",
+            "function": {
+                "name": "query_agent",
+                "description": "调用其他 Agent（如基金经理风格分析）获取其专业分析意见。可用 agent_id：qa_general（知识问答）、fund_张坤（张坤型）、fund_刘格菘（刘格菘型）、fund_丘栋荣（丘栋荣型）、fund_葛兰（葛兰型）、hotspot_brief（热点简报）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Agent ID，如 fund_张坤、qa_general、hotspot_brief",
+                        },
+                        "question": {
+                            "type": "string",
+                            "description": "要问的问题，如「分析 600519 的估值分位」",
+                        },
+                        "klt": {
+                            "type": "integer",
+                            "description": "K 线周期，102=周K 103=月K（仅基金经理 Agent 使用）",
+                            "default": 102,
+                        },
+                    },
+                    "required": ["agent_id", "question"],
                 },
             },
         },

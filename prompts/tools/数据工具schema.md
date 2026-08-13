@@ -1,7 +1,7 @@
 ---
 id: tool.datatools
 name: 数据工具 Schema
-version: 0.2.0
+version: 0.3.0
 role: tool
 status: active
 depends: []
@@ -110,6 +110,15 @@ output: 问答模式可用工具的 JSON Schema（function-calling 契约）
 入参:
   name: string
 返回: { name, stock_count, stocks: [{ code, name, added_date, note }] }
+```
+
+### 13. `query_agent` — 调用其他 Agent（v0.20 跨 Agent 通信）
+```
+入参:
+  agent_id: string   # 如 fund_张坤 / qa_general / hotspot_brief
+  question: string   # 要问的问题，如「分析 600519 的估值分位」
+  klt?: int          # 102=周K 103=月K（仅基金经理 Agent 使用）
+返回: { agent_id, answer: string }
 ```
 
 ## 工具返回约定
