@@ -1,21 +1,49 @@
 {% extends "base.html" %}
 {% block title %}问答 · 每日复盘{% endblock %}
 {% block content %}
-<h1>知识库问答</h1>
-<div class="panel">
-  <div class="row">
-    <input type="text" id="q" style="flex:1" placeholder="例如：什么是炸板率？今日连板梯队如何？">
-    <button class="btn primary" id="btnAsk">提问</button>
+<h1>问答与基金经理分析</h1>
+<div class="row" style="align-items:flex-start">
+  <div style="flex:1.4;min-width:0">
+    <div class="panel">
+      <div class="row">
+        <input type="text" id="q" style="flex:1" placeholder="例如：什么是炸板率？今日连板梯队如何？">
+        <button class="btn primary" id="btnAsk">提问</button>
+      </div>
+      <div class="muted" id="qaHint">
+        RAG 短线知识库（prompts + 文档 + 个人知识 + 个人战法）+ 6 个数据工具（连板梯队 / 题材 / 炸板资金流 / 涨跌停池等）。
+      </div>
+    </div>
+    <div class="panel" id="answer" hidden>
+      <div id="answerBody"></div>
+      <div class="muted" id="rounds" style="margin-top:6px"></div>
+      <h2>出处</h2>
+      <div id="sources"></div>
+    </div>
   </div>
-  <div class="muted" id="qaHint">
-    RAG 短线知识库（prompts + 文档 + 个人知识 + 个人战法）+ 6 个数据工具（连板梯队 / 题材 / 炸板资金流 / 涨跌停池等）。
+  <div style="flex:1;min-width:0">
+    <div class="panel">
+      <h2 style="margin-top:0">基金经理分析</h2>
+      <p class="muted">
+        独立风格 agent：选一位基金经理与 K 线周期，输入问题（可带 6 位股票代码），
+        按其档案规则用周K/月K 分析（周一→周K、每月1号→月K，不用日K；数据不足会明说）。
+      </p>
+      <label>基金经理</label>
+      <select id="fmSelect"></select>
+      <div class="muted" id="fmDesc" style="margin-top:4px"></div>
+      <label>K线周期</label>
+      <select id="fmKlt">
+        <option value="102">周K（每周一）</option>
+        <option value="103">月K（每月1号）</option>
+      </select>
+      <label>问题</label>
+      <div class="row">
+        <input type="text" id="fmQ" style="flex:1" placeholder="例：分析 600519 的估值分位与买入时机（可含 6 位代码）">
+        <button class="btn primary" id="fmAsk">分析</button>
+      </div>
+      <div class="muted" id="fmNotes" style="margin-top:8px"></div>
+      <div id="fmAnswer" style="margin-top:10px"></div>
+    </div>
   </div>
-</div>
-<div class="panel" id="answer" hidden>
-  <div id="answerBody"></div>
-  <div class="muted" id="rounds" style="margin-top:6px"></div>
-  <h2>出处</h2>
-  <div id="sources"></div>
 </div>
 {% endblock %}
 
@@ -53,5 +81,53 @@ document.getElementById('q').addEventListener('keydown', function(ev){
   if(ev.key === 'Enter') ask();
 });
 document.getElementById('q').focus();
+
+/* ---------- 基金经理分析 ---------- */
+function showManagerDesc(){
+  var sel = document.getElementById('fmSelect');
+  var opt = sel.options[sel.selectedIndex];
+  document.getElementById('fmDesc').textContent = opt && opt.dataset.desc ? opt.dataset.desc : '';
+}
+function loadManagers(){
+  api('/api/fund/managers')
+    .then(function(d){
+      var sel = document.getElementById('fmSelect');
+      sel.innerHTML = (d.managers || []).map(function(m){
+        return '<option value="' + esc(m.id) + '" data-desc="' + esc(m.description) + '">'
+          + esc(m.name) + '</option>';
+      }).join('');
+      if(sel.options.length) showManagerDesc();
+    })
+    .catch(function(){ /* 面板留空即可 */ });
+}
+function fundAsk(){
+  var q = document.getElementById('fmQ').value.trim();
+  var mid = document.getElementById('fmSelect').value;
+  if(!mid){ alert('请先选择基金经理'); return; }
+  if(!q){ alert('请输入问题'); return; }
+  var klt = document.getElementById('fmKlt').value;
+  document.getElementById('fmAsk').disabled = true;
+  document.getElementById('fmAnswer').innerHTML = '<span class="muted">思考中…</span>';
+  document.getElementById('fmNotes').textContent = '';
+  api('/api/fund/analyze', {method:'POST', body:JSON.stringify({manager_id: mid, question: q, klt: Number(klt)})})
+    .then(function(d){
+      document.getElementById('fmAnswer').innerHTML = d.answer_html || esc(d.answer);
+      var txt = (d.data_notes || []).join(' · ');
+      if(d.error){ txt = (txt ? txt + ' · ' : '') + 'LLM 异常：' + d.error; }
+      document.getElementById('fmNotes').textContent = txt;
+      document.getElementById('fmAsk').disabled = false;
+    })
+    .catch(function(e){
+      document.getElementById('fmAnswer').textContent = '';
+      alert(e.message);
+      document.getElementById('fmAsk').disabled = false;
+    });
+}
+document.getElementById('fmAsk').onclick = fundAsk;
+document.getElementById('fmQ').addEventListener('keydown', function(ev){
+  if(ev.key === 'Enter') fundAsk();
+});
+document.getElementById('fmSelect').onchange = showManagerDesc;
+loadManagers();
 </script>
 {% endblock %}

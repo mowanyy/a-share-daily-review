@@ -362,6 +362,49 @@ def api_review_history_day(date: str):
     return jsonify(report)
 
 
+# ---------------------------------------------------------------- 基金经理分析 API
+
+
+@api_bp.get("/api/fund/managers")
+def api_fund_managers():
+    """基金经理风格清单（skills/fund-styles/*.md，前端下拉用）。"""
+    from daily_review.web.fund_agent import list_managers
+
+    return jsonify({"managers": list_managers()})
+
+
+@api_bp.post("/api/fund/analyze")
+def api_fund_analyze():
+    """基金经理分析 agent：按所选风格 + 周K/月K 数据回复。未知经理 404，参数错 400。"""
+    from daily_review.web.fund_agent import ManagerNotFound, analyze as fund_analyze
+
+    data = request.get_json(silent=True) or {}
+    manager_id = str(data.get("manager_id", "")).strip()
+    question = str(data.get("question", "")).strip()
+    if not manager_id:
+        return jsonify({"error": "缺少 manager_id"}), 400
+    if not question:
+        return jsonify({"error": "问题不能为空"}), 400
+    try:
+        klt = int(data.get("klt", 102) or 102)
+    except (TypeError, ValueError):
+        return jsonify({"error": "klt 需为 102(周K) 或 103(月K)"}), 400
+    try:
+        result = fund_analyze(manager_id, question, klt=klt)
+    except ManagerNotFound as exc:
+        return jsonify({"error": str(exc)}), 404
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(
+        {
+            "answer": result["answer"],
+            "answer_html": md_to_html(result["answer"]),
+            "data_notes": result["data_notes"],
+            "error": result["error"],
+        }
+    )
+
+
 # ---------------------------------------------------------------- 问答 API
 
 _index_lock = threading.Lock()

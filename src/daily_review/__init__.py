@@ -100,6 +100,17 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      「使用节奏」章节（周一/月初表 + kline --klt 102/103 拉周/月K 数据 + 禁止日K 冒充
 	      周月K）；CLI kline 帮助补 103=月线。结构化回归测试锁定档案含周期方法论
 	      （test_skill_bridge.py）。286 测试通过。
+	v0.18：Web 问答页「基金经理分析」栏目（独立风格 agent）——问答页改双栏：左侧原
+	      知识库问答、右侧空白处新增「基金经理分析」面板。新增 web/fund_agent.py：
+	      list_managers 扫描 skills/fund-styles/*.md 档案（4 个基金经理可下拉选）；
+	      analyze 按所选风格档案生成 system prompt（角色头+档案正文含「时间周期与触发
+	      时点」第0节+输出纪律），从问题抠 6 位股票代码（去重限 3 只、剔除日期形数字）
+	      注入真实 周K(klt=102)/月K(klt=103) 数据（eastmoney.fetch_kline lmt=36，
+	      失败按数据不足处理并告知 agent），单次 llm.chat 回复，LLM 失败降级 error 字段。
+	      Web 新增 GET /api/fund/managers 与 POST /api/fund/analyze（未知经理 404、
+	      空问题/非法klt 400）；前端面板：基金经理下拉+周K/月K周期下拉+问题输入+分析
+	      按钮（md_to_html 渲染回答，副行显示数据注入说明与异常）。零外链零 CDN。
+	      298 测试通过。
 """
 
-__version__ = "0.17.1"
+__version__ = "0.18.0"
