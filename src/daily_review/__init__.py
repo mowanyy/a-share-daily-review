@@ -72,6 +72,14 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      launcher.py build_web_argv 还原为固定 127.0.0.1、launcher_gui.py 移除
 	      「局域网访问」复选框；web --host 参数保留（默认 127.0.0.1 仅本机）。
 	      移动端适配保留。257 测试通过。
+	v0.16：复盘报告持久化查询（历史报告档案）——复盘/隔夜/开盘策略每次生成已落盘
+	      output/{date}_*.md，但 Web 只查进程内存 JobState.report_html，重启后旧报告
+	      看不到、需重新生成，不利多日复盘。新增 web/history.py：list_reports 扫描
+	      output/ 四种产物按日倒序、load_report 读回复盘 md → md_to_html 全文 +
+	      section_html 提取次日预案，返回结构与 JobState.to_dict 兼容（前端 showResult
+	      零改动复用）；Web 新增 /api/review/history 与 /api/review/history/<date>，
+	      review.html 加「历史报告」日期下拉 + 查看。零改动生成逻辑，日期正则 +
+	      resolve 防路径穿越。268 测试通过。
 """
 
-__version__ = "0.15.1"
+__version__ = "0.16.0"

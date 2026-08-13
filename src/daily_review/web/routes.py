@@ -311,6 +311,28 @@ def api_review_status(job_id: str):
     return jsonify(job.to_dict())
 
 
+@api_bp.get("/api/review/history")
+def api_review_history():
+    """历史报告列表：扫描 output/ 已有复盘/隔夜预案/开盘策略/看板，按日倒序。"""
+    from daily_review.web.history import list_reports
+
+    return jsonify({"reports": list_reports()})
+
+
+@api_bp.get("/api/review/history/<date>")
+def api_review_history_day(date: str):
+    """历史复盘报告读回（多日复盘用）：{date} 的全文 + 次日预案章节；无该日文件 → 404。"""
+    from daily_review.web.history import load_report
+
+    try:
+        report = load_report(date)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if report is None:
+        return jsonify({"error": f"未找到 {date} 的复盘报告（先运行 review 生成）"}), 404
+    return jsonify(report)
+
+
 # ---------------------------------------------------------------- 问答 API
 
 _index_lock = threading.Lock()

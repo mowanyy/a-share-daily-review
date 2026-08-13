@@ -9,11 +9,11 @@
 }
 </style>
 <div class="panel">
-	  <div class="row">
-	    <div><label>交易日</label><input type="text" id="date" placeholder="YYYYMMDD"></div>
-	    <div style="flex:2"><label>战法（驱动次日预案）</label><select id="strategy"><option value="">通用预案（不指定战法）</option></select></div>
-	    <div><label>无 LLM（仅采集+指标）</label><input type="checkbox" id="noLlm" style="width:auto"></div>
-	  </div>
+  <div class="row">
+    <div><label>交易日</label><input type="text" id="date" placeholder="YYYYMMDD"></div>
+    <div style="flex:2"><label>战法（驱动次日预案）</label><select id="strategy"><option value="">通用预案（不指定战法）</option></select></div>
+    <div><label>无 LLM（仅采集+指标）</label><input type="checkbox" id="noLlm" style="width:auto"></div>
+  </div>
 <div class="row" style="margin-top:12px;gap:8px">
     <button class="btn primary" id="btnReview">开始复盘</button>
     <button class="btn" id="btnPlanTask">隔夜预案</button>
@@ -21,8 +21,14 @@
     <button class="btn" id="btnUpdateData">更新数据</button>
     <span class="muted" style="font-size:0.85em">隔夜预案（9:00前）· 开盘策略（9:25-9:30）· 更新数据（刷缓存+重采近N日）</span>
   </div>
-	  <div class="muted" id="hint"></div>
-	</div>
+  <div class="row" style="margin-top:12px;gap:8px">
+    <label style="margin:0">历史报告（已生成的多日复盘档案，重启 Web 后仍在）</label>
+    <select id="histDate" class="btn" style="width:auto;padding:6px 10px"><option value="">选择日期…</option></select>
+    <button class="btn primary" id="btnHistView">查看</button>
+    <span class="muted" style="font-size:0.85em" id="histHint"></span>
+  </div>
+  <div class="muted" id="hint"></div>
+</div>
 
 <div class="panel" id="prog" hidden>
   <div class="row" style="justify-content:space-between">
@@ -172,7 +178,39 @@ document.getElementById('btnDash').onclick = function(){
   var d = curDate || document.getElementById('date').value.trim();
   window.location.href = '/dashboard' + (d ? ('?date=' + d) : '');
 };
+function loadHistory(){
+  api('/api/review/history').then(function(d){
+    var sel = document.getElementById('histDate');
+    var hint = document.getElementById('histHint');
+    var reports = (d.reports || []).filter(function(r){ return r.has_review; });
+    if(!reports.length){
+      hint.textContent = '暂无历史复盘报告（先跑一次复盘，之后重启 Web 也能查看）';
+      return;
+    }
+    sel.innerHTML = '<option value="">选择日期…</option>' + reports.map(function(r){
+      var extra = [];
+      if(r.has_overnight) extra.push('隔夜');
+      if(r.has_open) extra.push('开盘');
+      if(r.has_dashboard) extra.push('看板');
+      return '<option value="' + esc(r.date) + '">' + r.date
+        + (extra.length ? '（' + extra.join('/') + '）' : '') + '</option>';
+    }).join('');
+    hint.textContent = '共 ' + reports.length + ' 天历史复盘，选日期后点「查看」';
+  }).catch(function(){});
+}
+function viewHistory(){
+  var d = document.getElementById('histDate').value;
+  if(!d){ return; }
+  api('/api/review/history/' + d).then(function(j){
+    /* 历史报告按复盘任务处理：全文/只看预案按钮照常工作（btnPlan 依 curTask 显示） */
+    curTask = 'review';
+    showResult(j);
+    document.getElementById('resultMeta').textContent = j.trade_date + ' · 历史复盘';
+  }).catch(function(e){ alert(e.message); });
+}
+document.getElementById('btnHistView').onclick = viewHistory;
 loadDate();
 loadStrategies();
+loadHistory();
 </script>
 {% endblock %}
