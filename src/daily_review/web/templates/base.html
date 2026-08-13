@@ -58,6 +58,26 @@ hr { border:none; border-top:1px solid var(--border); margin:16px 0; }
 .progress > div { height:100%; background:var(--accent); transition:width .3s; }
 .row { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
 .row > div { min-width:140px; }
+.table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+/* 平板及以下 */
+@media (max-width:1079px) {
+  main { padding:16px 14px 48px; }
+}
+/* 手机 */
+@media (max-width:767px) {
+  nav.top { padding:8px 12px; gap:2px; }
+  nav.top a { padding:5px 8px; font-size:13px; }
+  nav.top .brand { font-size:14px; margin-right:8px; }
+  main { padding:12px; }
+  h1 { font-size:18px; }
+  h2 { font-size:15px; }
+  .row { flex-direction:column; gap:6px; }
+  .row > div { min-width:0; width:100%; }
+  .btn { padding:10px 16px; }
+  .panel { padding:12px; }
+  table { font-size:12px; }
+  th, td { padding:5px 6px; }
+}
 </style>
 </head>
 <body>
@@ -65,6 +85,7 @@ hr { border:none; border-top:1px solid var(--border); margin:16px 0; }
   <a class="brand" href="/">每日复盘</a>
   <a href="/strategies">战法管理</a>
   <a href="/review">跑复盘</a>
+  <a href="/concepts">概念池</a>
   <a href="/qa">问答</a>
   <a href="/dashboard">数据看板</a>
 </nav>

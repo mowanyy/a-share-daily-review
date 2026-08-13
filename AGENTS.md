@@ -1,10 +1,11 @@
-# CLAUDE.md — 项目总纲（AI 索引入口）
+# AGENTS.md — 项目总纲（AI 索引入口）
 
-> 本文件是 Claude Code / AI 协作者在本仓库工作时的**总索引**。改代码、改 prompt、加战法前，先读本节与相关链接。
+> 本文件是 AI 协作者在本仓库工作时的**总索引**（与 CLAUDE.md 同步维护）。改代码、改 prompt、加战法前，先读本节与相关链接。
+> **维护约定**：本文件与 `CLAUDE.md` 内容保持一致；每次功能/版本更新后，同步更新本文件的「当前阶段」「已可用命令」「已登记 Prompt 快速视图」三处。
 
 ## 项目一句话
 
-A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化分析（连板梯队 / 题材运行周期 / 炸板净流入 / 龙虎榜游资）→ LLM 生成 Markdown 复盘文档，并支持问答；未来支持用户**个人战法**驱动的**次日预案**。
+A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化分析（连板梯队 / 题材运行周期 / 炸板净流入 / 龙虎榜游资 / 情绪温度）→ LLM 生成 Markdown 复盘文档；**复盘三时段**：盘后复盘（17:00 后）→ 隔夜预案（9:00 前，消息面）→ 开盘策略（9:25-9:30，竞价筛选个股）；并支持问答与个人战法驱动的次日预案。
 
 ## 当前阶段（重要）
 
@@ -38,7 +39,11 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review            # 缺省探测最近交易日
 # 指定个人战法跑复盘（战法 ID 见 Web 战法管理页 / data/strategies/ 内 front-matter；--no-llm 亦可）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806 --strategy strategy.user-xxx
-# Web 工作台（Flask）：战法管理 / 跑复盘看报告与次日预案 / 问答 / 数据看板（默认仅本机 127.0.0.1:5000；--open 用系统浏览器打开）
+# 隔夜预案（9:00 前）：昨日复盘 + 东财7x24隔夜消息 → output/{date}_隔夜预案.md
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review plan --date 20260812
+# 开盘策略（9:25-9:30）：竞价数据 + 隔夜预案 → output/{date}_开盘策略.md
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review open --date 20260812
+# Web 工作台（Flask）：战法管理 / 跑复盘（含隔夜预案/开盘策略按钮）/ 问答 / 数据看板（默认仅本机 127.0.0.1:5000；--open 用系统浏览器打开）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review web --open
 # 局域网访问（家人手机同 Wi-Fi 浏览器打开 http://<本机IP>:5000；无认证，仅家庭可信网络使用）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review web --lan --open
@@ -67,8 +72,9 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `docs/战法规范.md` | 战法编写规范 | 新增/修改战法时 |
 | `prompts/INDEX.md` | **Prompt 总索引**（id→文件→角色→依赖→状态） | 改任何 prompt 前必读 |
 | `prompts/glossary/术语表.md` | 超短术语统一语义 | 写 prompt / 判定术语时 |
-| `src/daily_review/` | Python 包（v0.9：采集层 `data/` + 指标层 `analysis/`（含 `emotion.py`）+ LLM 层 `llm/` + 问答知识库 `kb/`（corpus/manifest/embedding/index/tools/qa）+ 数据看板 `dashboard.py` + Web 工作台 `web/`（app/routes/strategy/jobs/md/templates）+ 图形启动器 `launcher.py`（纯核心）/`launcher_gui.py`（tkinter 窗口）+ 管道 `pipeline.py`） | 实现阶段 |
+| `src/daily_review/` | Python 包（采集层 `data/` + 指标层 `analysis/`（含 `auction.py` 竞价）+ LLM 层 `llm/`（含 `premarket.py` 盘前）+ 问答知识库 `kb/` + 数据看板 `dashboard.py` + Web 工作台 `web/`（app/routes/strategy/jobs/md/templates）+ 图形启动器 `launcher.py`/`launcher_gui.py` + 管道 `pipeline.py`） | 实现阶段 |
 | `knowledge/` | 个人短线知识库（`.md` 自动入库，增量重索引持续更新；含 `README.md` 说明） | 用户维护 |
+| `AGENTS.md` / `CLAUDE.md` | AI 协作者总索引（本文件，两处同步维护） | 每次会话开始必读 |
 
 ## 工作流约定
 
@@ -78,6 +84,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 3. 术语只使用 `prompts/glossary/术语表.md` 中的定义；新术语先补进术语表
 4. 在 `prompts/INDEX.md` 登记一行（字段与 front-matter 一一对应）
 5. `status` 用 `draft`（草稿）或 `active`（可用）；新写的默认 `draft`
+6. **同步 AGENTS.md「已登记 Prompt 快速视图」与 CLAUDE.md**
 
 ### 新增/修改一个战法（用户个人战法）
 - 遵循 `docs/战法规范.md` 与 `prompts/strategies/战法模板.md`
@@ -92,6 +99,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 - 唯一可用的解释器：`E:/conda_envs/envs/mowan_dm/python.exe`（Python 3.14.6）。**不得改用其他解释器**，详见 `docs/开发环境.md`
 - 环境变更时（新装依赖/换版本）：更新 `requirements.txt` / `requirements-dev.txt` 锁定版本，并在 `docs/开发环境.md` 同步
 - 新装包只允许进入 mowan_dm 环境或本项目文件夹
+- **不得在 workspace 之外乱操作**（如系统 Python / 其他盘符虚拟环境）
 - `.gitignore` 已排除 `data/*/`、`output/*/`、`*.csv`、缓存目录——这些不入库
 
 ### 提交与版本（每轮对话结束时必须执行）
@@ -106,7 +114,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 `{层级}.{模块}`，层级取值：
 - `system.*`   角色级（复盘分析师、问答助手）
-- `module.*`   分析模块（ladder=连板梯队 / theme=题材 / break=炸板 / plan=次日预案）
+- `module.*`   分析模块（ladder=连板梯队 / theme=题材 / break=炸板 / plan=次日预案 / overnight=隔夜预案 / open_strategy=开盘策略）
 - `strategy.*` 战法库
 - `tool.*`     问答模式工具
 - `example.*`  示例
@@ -125,6 +133,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `module.lhb` | `prompts/modules/龙虎榜游资.md` | draft |
 | `module.plan` | `prompts/modules/次日预案.md` | draft |
 | `module.hotspot` | `prompts/modules/热点信息简报.md` | draft |
+| `module.overnight` | `prompts/modules/隔夜预案.md` | draft |
+| `module.open_strategy` | `prompts/modules/开盘策略.md` | draft |
 | `strategy.template` | `prompts/strategies/战法模板.md` | draft |
 | `strategy.example` | `prompts/strategies/示例-连板接力.md` | draft |
 | `tool.datatools` | `prompts/tools/数据工具schema.md` | draft |
@@ -133,10 +143,10 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 边界（不做 / 尚未做）
 
-- 数据源定为**东方财富接口爬取**（非 akshare / tushare）。v0.3 已实现涨跌停池/资金流/概念板块（`data/eastmoney_pool.py`），v0.4 已实现龙虎榜/买卖席位（`data/eastmoney_lhb.py`）；**连板池（LB）、分时数据待实现**，详见 `docs/东财接口清单.md` 的状态列
+- 数据源定为**东方财富接口爬取**（非 akshare / tushare）。v0.3 已实现涨跌停池/资金流/概念板块（`data/eastmoney_pool.py`），v0.4 已实现龙虎榜/买卖席位（`data/eastmoney_lhb.py`）；v0.13 已实现 7x24 快讯（`data/eastmoney_news.py`）；**连板池（LB）、分时数据待实现**，详见 `docs/东财接口清单.md` 的状态列
 - 龙虎榜盘后更新：`review` 在**下午 17:30 之后**跑才包含当日龙虎榜章节；盘中/未更新日该章节自动降级为「未更新」说明
 - 运行环境固定为 `E:/conda_envs/envs/mowan_dm`；安装依赖只进该环境或本项目文件夹
-- LLM 角色：**自动报告已实现**（DeepSeek，`llm/`）、**数据看板多日解读已实现**（`dashboard.py`，可 `--no-llm` 降级）、**交互问答已实现**（`kb/`，RAG 知识库 + 6 个数据工具 function-calling；向量路径可选，未装自动降级纯关键词）、**Web 工作台已实现**（`web/`，Flask，默认仅本机 `127.0.0.1:5000`，无认证勿暴露 LAN）
+- LLM 角色：**自动报告已实现**（DeepSeek，`llm/`）、**盘前策略已实现**（`llm/premarket.py`，隔夜预案+开盘策略）、**数据看板多日解读已实现**（`dashboard.py`，可 `--no-llm` 降级）、**交互问答已实现**（`kb/`，RAG 知识库 + 6 个数据工具 function-calling；向量路径可选，未装自动降级纯关键词）、**Web 工作台已实现**（`web/`，Flask，默认仅本机 `127.0.0.1:5000`，无认证勿暴露 LAN）
 - 首期模块：情绪温度、连板梯队、题材运行周期与归类、炸板净流入、龙虎榜游资（已实现）
 - 数据看板：近 N 日趋势图表单文件 HTML（`output/{date}_看板.html`，不入库）+ 趋势摘要表 + 情绪温度成分拆解 + LLM 多日趋势解读；历史数据缺日时该日按缺数据标记，看板照常渲染；Web 端带进程内缓存+文件复用+错误兜底（见上方 v0.10 修复说明）
 - **个人战法**（v0.8 已实现）：两条路径——① tracked 种子示例 `prompts/strategies/`（`strategy.template/example`，只读，禁改/禁删，登记者 `prompts/INDEX.md`）；② **用户 UI 上传**落盘 `data/strategies/`（gitignored `data/*/` 已覆盖，**不入库**），id 自动 `strategy.user-<sha256(name)[:10]>`，驱动 `review --strategy <id>` 与 Web 复盘任务的次日预案（`module.plan` + 战法正文注入）

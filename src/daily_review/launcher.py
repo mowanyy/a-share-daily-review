@@ -122,9 +122,11 @@ def build_dashboard_argv(runtime: dict, *, date: str = "", no_llm: bool = False,
     return argv
 
 
-def build_web_argv(runtime: dict, *, open_: bool = True, port: int = 5000) -> list[str]:
+def build_web_argv(runtime: dict, *, open_: bool = True, port: int = 5000, host: str = "127.0.0.1") -> list[str]:
     port = max(1, min(int(port), 65535))
-    argv = _base(runtime) + ["web", "--host", "127.0.0.1", "--port", str(port)]
+    argv = _base(runtime) + ["web", "--host", host, "--port", str(port)]
+    if host == "0.0.0.0":
+        argv.append("--lan")
     if open_:
         argv.append("--open")
     return argv

@@ -15,6 +15,7 @@ import pandas as pd
 from daily_review.analysis import analyze_break, analyze_lhb, build_themes, compute_emotion, compute_ladder
 from daily_review.config import get_settings
 from daily_review.data import eastmoney_lhb, eastmoney_pool as em
+from daily_review.data.local_cache import load_board_constituents, load_industry_map, save_board_constituents, save_industry_map
 from daily_review.data.repo import load_csv, save_csv
 
 # 时间线长度（近 N 个交易日：今日 + N-1 天历史，供晋级率/题材时序/高度序列）
@@ -110,10 +111,15 @@ def _build_concept_map(
     top = boards.sort_values("pct", ascending=False).head(TOP_CONCEPT_BOARDS)
     mapping: dict[str, list[str]] = {c: [] for c in zt_codes}
     for _, b in top.iterrows():
-        try:
-            codes = em.fetch_board_constituents(b["board_code"])
-        except Exception:
-            continue
+        board_code = str(b["board_code"])
+        codes = load_board_constituents(board_code)
+        if codes is None:
+            try:
+                codes = em.fetch_board_constituents(board_code)
+                if codes:
+                    save_board_constituents(board_code, codes)
+            except Exception:
+                continue
         for c in codes:
             if c in mapping:
                 mapping[c].append(str(b["board_name"]))
@@ -203,11 +209,18 @@ def collect(trade_date: str, n_days: int = TIMELINE_DAYS) -> dict:
         hist_days.append({"date": d, "zt": pool, "zb": zb_i, "dt": dt_i, "zb_ok": ok_zb, "dt_ok": ok_dt})
 
     # 3. 行业全名映射（best-effort，池内 hybk 兜底）
+    #    优先走本地缓存（7 天 TTL），缓存过期/缺失才联网拉取
     industry_map: dict[str, str] = {}
-    try:
-        industry_map = em.fetch_stock_industry_map()
-    except Exception:
-        pass
+    cached_map = load_industry_map()
+    if cached_map is not None:
+        industry_map = cached_map
+    else:
+        try:
+            industry_map = em.fetch_stock_industry_map()
+            if industry_map:
+                save_industry_map(industry_map)
+        except Exception:
+            pass
     if industry_map:
         zt["industry"] = zt["industry"].map(lambda x: industry_map.get(x, x))
         zb["industry"] = zb["industry"].map(lambda x: industry_map.get(x, x))

@@ -212,20 +212,31 @@ def fetch_dt_pool(trade_date: str) -> pd.DataFrame:
 def resolve_recent_trade_dates(start: str, n_days: int = 5) -> list[str]:
     """探测式解析最近交易日：从 start 起逐日拉涨停池，空则回退，取 n 个非空日。
 
-    返回**由近及远**（最新在前）的交易日列表。免维护交易日历。
+    返回**由近及远**（最新在前）的交易日列表。优先走本地交易日历缓存。
     """
+    from daily_review.data.local_cache import add_trade_dates, load_trade_dates
+
+    cached = load_trade_dates()
     dates: list[str] = []
     cur = start
-    for _ in range(max(n_days * 4, 12)):  # 防死循环兜底
+    for _ in range(max(n_days * 4, 12)):
         if len(dates) >= n_days:
             break
-        try:
-            pool = _pool_json("getTopicZTPool", cur, pagesize=5)
-        except Exception:
-            pool = []
-        if pool:
+        if cur in cached:
             dates.append(cur)
+        else:
+            try:
+                pool = _pool_json("getTopicZTPool", cur, pagesize=5)
+            except Exception:
+                pool = []
+            if pool:
+                dates.append(cur)
+                cached.add(cur)
+            else:
+                cached.discard(cur)
         cur = _prev_date(cur)
+    # 落盘缓存
+    add_trade_dates(cached)
     return dates
 
 

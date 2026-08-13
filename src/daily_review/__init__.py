@@ -43,13 +43,32 @@ v0.12：修复看板「涨停家数多时文字无法显示」+ 资金流缺失�
       净流入 Top-100）→ fetch_moneyflow 改为 clist 部分结果 + 对缺失炸板股代码逐个 fflow
       单股补齐（实测 17/17 全有数据）；DDX 日线/分时实测无公开稳定接口，本次只修日线补齐。
 v0.12.1：LLM 后端切换商汤 SenseNova（主）+ 官方 DeepSeek 自动兜底——新 key 属商汤
-      Token Plan（token.sensenova.cn/v1，api.sensenova.cn 404），模型 deepseek-v4-flash
-      （仅此名可用）是推理模型（回包带 reasoning_content，思考先占 token）且免费额度
-      限流（实测 429）；四个小预算调用点 max_tokens 500/600/500/1500 → 1500/1200/1200/2500
-      给思考留预算；chat() 空 content 报错区分「推理模型思考占满预算」；LLMError 增
-      retryable 标记（429/5xx/网络=可重试），chat/chat_tools 经 _post_fallback 在可重试
-      失败时自动用兜底后端（DEEPSEEK_FALLBACK_API_KEY / LLM_FALLBACK_BASE_URL /
-      LLM_FALLBACK_MODEL，官方 DeepSeek）重试一次。
+	      Token Plan（token.sensenova.cn/v1，api.sensenova.cn 404），模型 deepseek-v4-flash
+	      （仅此名可用）是推理模型（回包带 reasoning_content，思考先占 token）且免费额度
+	      限流（实测 429）；四个小预算调用点 max_tokens 500/600/500/1500 → 1500/1200/1200/2500
+	      给思考留预算；chat() 空 content 报错区分「推理模型思考占满预算」；LLMError 增
+	      retryable 标记（429/5xx/网络=可重试），chat/chat_tools 经 _post_fallback 在可重试
+	      失败时自动用兜底后端（DEEPSEEK_FALLBACK_API_KEY / LLM_FALLBACK_BASE_URL /
+	      LLM_FALLBACK_MODEL，官方 DeepSeek）重试一次。
+	v0.13：复盘三时段拆分——盘后复盘（17:00后，现有）+ 隔夜预案（9:00前，消息面）
+	      + 开盘策略（9:25-9:30，竞价个股筛选）。新增东财7x24快讯采集（eastmoney_news）、
+	      竞价指标计算（auction）、隔夜预案+开盘策略 LLM 生成（premarket）；CLI 新增
+	      plan/open 子命令，Web 新增对应按钮与 API；两个新 prompt：module.overnight、
+	      module.open_strategy。257 测试通过。
+	v0.14：看板数据本地化加速 + 概念池 Agent 管理——补上 3 块静态缓存到 data/cache/
+	      （行业映射/概念成分/交易日历，省~72s/次网络开销）；新增 data/local_cache.py；
+	      pipeline 行业映射/概念成分、eastmoney_pool 交易日历均走缓存；新增 update-data
+	      CLI 命令（刷新缓存+重采N天）与 Web 按钮；新增概念池 CRUD 服务 web/concept_pool.py
+	      （data/stock_pool/concepts/{概念名}.csv），Agent 通过 6 个 function-calling 工具
+	      增删改查概念股票池，自动同步到 knowledge/概念池/ 供 RAG 检索；新增 tools/stock_pool.py
+	      供选股数据按日期切分（split-pool 命令）；新增 6 个概念池工具 schema 更新。
+	v0.15：Web 工作台移动端适配 + 局域网访问——base.html 全局媒体查询（≤767px 单列布局、
+	      导航紧凑/表单堆叠/按钮触控/表格可横滑），dashboard.py 自包含看板适配手机端
+	      （KPI 网格列宽/字号/表格溢出），review/concepts 页面微调；新增文档
+	      docs/移动端适配方案.md（响应式设计规范 9 章）；CLI web 新增 --lan 快捷参数
+	      （等价 --host 0.0.0.0，启动打印局域网访问地址），图形启动器加「局域网访问」
+	      复选框（launcher.build_web_argv 支持 host）。家人手机同 Wi-Fi 浏览器
+	      打开 http://<笔记本IP>:5000 即可查看。257 测试通过。
 """
 
-__version__ = "0.12.1"
+__version__ = "0.15.0"

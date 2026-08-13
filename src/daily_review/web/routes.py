@@ -67,6 +67,11 @@ def dashboard_page():
     return render_template("dashboard.html")
 
 
+@pages_bp.get("/concepts")
+def concepts_page():
+    return render_template("concepts.html")
+
+
 # ---------------------------------------------------------------- 战法 API
 
 
@@ -166,10 +171,136 @@ def api_review_start():
     no_llm = bool(data.get("no_llm", False))
     jobs = current_app.extensions["jobs"]
     try:
-        job = jobs.start(trade_date=trade_date, strategy_id=strategy_id, no_llm=no_llm)
+        job = jobs.start_review(trade_date=trade_date, strategy_id=strategy_id, no_llm=no_llm)
     except JobBusy as exc:
         return jsonify({"error": str(exc)}), 409
     return jsonify({"job_id": job.id}), 202
+
+
+@api_bp.post("/api/plan/start")
+def api_plan_start():
+    """隔夜预案（9:00 前）：昨日复盘 + 东财7x24隔夜消息 → 今日关注方向。"""
+    data = request.get_json(silent=True) or {}
+    trade_date = str(data.get("trade_date", "")).strip()
+    if not _DATE_RE.fullmatch(trade_date):
+        return jsonify({"error": "trade_date 需为 YYYYMMDD"}), 400
+    jobs = current_app.extensions["jobs"]
+    try:
+        job = jobs.start_plan(trade_date=trade_date)
+    except JobBusy as exc:
+        return jsonify({"error": str(exc)}), 409
+    return jsonify({"job_id": job.id}), 202
+
+
+@api_bp.post("/api/open/start")
+def api_open_start():
+    """开盘策略（9:25-9:30）：竞价数据 + 隔夜预案 → 有机会的个股。"""
+    data = request.get_json(silent=True) or {}
+    trade_date = str(data.get("trade_date", "")).strip()
+    if not _DATE_RE.fullmatch(trade_date):
+        return jsonify({"error": "trade_date 需为 YYYYMMDD"}), 400
+    jobs = current_app.extensions["jobs"]
+    try:
+        job = jobs.start_open(trade_date=trade_date)
+    except JobBusy as exc:
+        return jsonify({"error": str(exc)}), 409
+    return jsonify({"job_id": job.id}), 202
+
+
+# ---------------------------------------------------------------- 数据更新 API
+
+
+@api_bp.post("/api/data/update")
+def api_data_update():
+    """手动一键更新数据：刷新静态缓存 + 重采 N 天。"""
+    data = request.get_json(silent=True) or {}
+    trade_date = str(data.get("trade_date", "")).strip() or _recent_date()
+    if not _DATE_RE.fullmatch(trade_date):
+        return jsonify({"error": "trade_date 需为 YYYYMMDD"}), 400
+    days = max(1, int(data.get("days", 6)))
+    force = bool(data.get("force", False))
+    jobs = current_app.extensions["jobs"]
+    try:
+        job = jobs.start_data_update(trade_date=trade_date, days=days, force=force)
+    except JobBusy as exc:
+        return jsonify({"error": str(exc)}), 409
+    return jsonify({"job_id": job.id}), 202
+
+
+# ---------------------------------------------------------------- 概念池 API
+
+
+@api_bp.get("/api/concept-pools")
+def api_concept_pool_list():
+    from daily_review.web.concept_pool import list_pools
+
+    return jsonify({"concept_pools": list_pools()})
+
+
+@api_bp.post("/api/concept-pools")
+def api_concept_pool_create():
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name", "")).strip()
+    if not name:
+        return jsonify({"error": "概念池名称不能为空"}), 400
+    from daily_review.web.concept_pool import create_pool
+
+    try:
+        result = create_pool(name, description=str(data.get("description", "")))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result), 201
+
+
+@api_bp.delete("/api/concept-pools/<name>")
+def api_concept_pool_delete(name: str):
+    from daily_review.web.concept_pool import delete_pool, query_pool
+
+    pool = query_pool(name)
+    if pool is None:
+        return jsonify({"error": f"概念池「{name}」不存在"}), 404
+    result = delete_pool(name)
+    return jsonify(result)
+
+
+@api_bp.get("/api/concept-pools/<name>")
+def api_concept_pool_query(name: str):
+    from daily_review.web.concept_pool import list_pools, query_pool
+
+    stocks = query_pool(name)
+    if stocks is None:
+        return jsonify({"error": f"概念池「{name}」不存在", "available": [p["name"] for p in list_pools()]}), 404
+    return jsonify({"name": name, "stock_count": len(stocks), "stocks": stocks})
+
+
+@api_bp.post("/api/concept-pools/<name>/stocks")
+def api_concept_pool_add_stocks(name: str):
+    data = request.get_json(silent=True) or {}
+    stocks = data.get("stocks", [])
+    if not stocks:
+        return jsonify({"error": "缺少 stocks 参数"}), 400
+    if isinstance(stocks, dict):
+        stocks = [{"code": c, "name": n} for c, n in stocks.items()]
+    from daily_review.web.concept_pool import add_stocks
+
+    try:
+        result = add_stocks(name, stocks)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(result)
+
+
+@api_bp.delete("/api/concept-pools/<name>/stocks")
+def api_concept_pool_remove_stocks(name: str):
+    data = request.get_json(silent=True) or {}
+    codes = str(data.get("codes", "")).strip()
+    codes_list = [c.strip() for c in codes.replace("，", ",").split(",") if c.strip()]
+    if not codes_list:
+        return jsonify({"error": "缺少 codes 参数"}), 400
+    from daily_review.web.concept_pool import remove_stocks
+
+    result = remove_stocks(name, codes_list)
+    return jsonify(result)
 
 
 @api_bp.get("/api/review/status/<job_id>")

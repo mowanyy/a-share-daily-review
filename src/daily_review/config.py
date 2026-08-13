@@ -45,6 +45,11 @@ class Settings:
     max_retries: int = 3               # 失败重试次数
     cache_enabled: bool = True
 
+    # 静态缓存目录（v0.14：跨日全局数据，如行业映射/交易日历/概念成分）
+    cache_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "data" / "cache")
+    # 供选股数据切分目录（v0.14：按日期切分的股票池）
+    stock_pool_dir: Path = field(default_factory=lambda: PROJECT_ROOT / "data" / "stock_pool")
+
     # LLM（v0.3 启用，DeepSeek，OpenAI 兼容协议）
     llm_base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "https://api.deepseek.com"))
     llm_api_key: str = field(

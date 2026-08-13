@@ -174,16 +174,221 @@ def _cmd_review(args) -> None:
     return 0
 
 
+def _find_prev_trade_date(trade_date: str) -> str:
+    """获取 trade_date 的前一个交易日。"""
+    dates = eastmoney_pool.resolve_recent_trade_dates(trade_date, n_days=2)
+    if not dates:
+        return trade_date
+    # dates[0] 是 trade_date 或最近交易日
+    if dates[0] == trade_date and len(dates) > 1:
+        return dates[1]
+    return dates[0]
+
+
+def _cmd_plan(args) -> None:
+    """隔夜预案（9:00 前运行）：基于昨日复盘 + 隔夜消息。"""
+    from daily_review.data.eastmoney_news import fetch_overnight_news
+    from daily_review.llm.client import LLMError
+    from daily_review.llm.premarket import generate_overnight_plan
+    from daily_review.pipeline import collect, compute
+
+    trade_date = args.date or _probe_recent_date()
+    if not args.date:
+        print(f"[plan] 缺省交易日: {trade_date}")
+
+    prev_date = _find_prev_trade_date(trade_date)
+    if prev_date == trade_date:
+        print(f"[plan] 未找到 {trade_date} 的前一交易日，用昨日复盘数据")
+    else:
+        print(f"[plan] 昨日复盘基准: {prev_date}")
+
+    # 1. 采集昨日指标（复用 CSV 缓存）
+    try:
+        collected = collect(prev_date)
+        indicators = compute(collected)
+    except Exception as exc:
+        print(f"[plan] 采集昨日数据失败：{type(exc).__name__}: {exc}")
+        return 1
+    _print_summary(indicators)
+
+    # 2. 采集隔夜消息
+    print("\n[plan] 采集隔夜消息（东财7x24快讯）...")
+    try:
+        news = fetch_overnight_news(trade_date)
+        print(f"  隔夜消息 {len(news)} 条")
+    except Exception as exc:
+        print(f"[plan] 隔夜消息采集失败：{exc}")
+        news = []
+
+    # 3. 生成隔夜预案
+    print("\n[LLM] 生成隔夜预案...")
+    try:
+        md = generate_overnight_plan(indicators, news, trade_date)
+    except LLMError as exc:
+        print(f"[plan] LLM 隔夜预案生成失败：{exc}")
+        return 1
+    out = get_settings().output_dir / f"{trade_date}_隔夜预案.md"
+    print(f"\n已生成: {out}")
+    print(f"（{len(md.splitlines())} 行）")
+    return 0
+
+
+def _cmd_open(args) -> None:
+    """开盘策略（9:25-9:30 运行）：基于竞价数据 + 隔夜预案。"""
+    from daily_review.analysis.auction import compute_auction, fetch_auction_data
+    from daily_review.llm.client import LLMError
+    from daily_review.llm.premarket import generate_open_strategy
+    from daily_review.pipeline import collect, compute
+
+    trade_date = args.date or _probe_recent_date()
+    if not args.date:
+        print(f"[open] 缺省交易日: {trade_date}")
+
+    prev_date = _find_prev_trade_date(trade_date)
+    if prev_date == trade_date:
+        print(f"[open] 未找到 {trade_date} 的前一交易日")
+    else:
+        print(f"[open] 昨日复盘基准: {prev_date}")
+
+    # 1. 采集昨日指标（复用 CSV 缓存）
+    try:
+        collected = collect(prev_date)
+        indicators = compute(collected)
+    except Exception as exc:
+        print(f"[open] 采集昨日数据失败：{type(exc).__name__}: {exc}")
+        return 1
+    _print_summary(indicators)
+
+    # 2. 加载隔夜预案文案
+    plan_path = get_settings().output_dir / f"{trade_date}_隔夜预案.md"
+    plan_text = ""
+    if plan_path.exists():
+        plan_text = plan_path.read_text(encoding="utf-8")
+        print(f"\n[open] 已加载隔夜预案: {plan_path}")
+    else:
+        print(f"\n[open] 未找到隔夜预案文件（{plan_path}），继续执行")
+
+    # 3. 获取竞价数据（昨日涨停股）
+    zt = collected.get("zt")
+    if zt is not None and not zt.empty:
+        codes = [str(c) for c in zt["code"]]
+        print(f"\n[open] 采集竞价数据（{len(codes)} 只涨停股）...")
+        try:
+            quotes = fetch_auction_data(codes)
+            # 昨日封单映射
+            prev_seal_map = {}
+            if "fund" in zt.columns:
+                import pandas as pd
+                for _, r in zt.iterrows():
+                    code = str(r["code"])
+                    fund = r.get("fund")
+                    if fund is not None and pd.notna(fund):
+                        prev_seal_map[code] = float(fund)
+            auction_data = compute_auction(quotes, prev_seal_map=prev_seal_map)
+            ready = [r for r in auction_data if r.get("auction_pct") is not None]
+            print(f"  竞价数据 {len(auction_data)} 条（有竞价价 {len(ready)} 只）")
+        except Exception as exc:
+            print(f"[open] 竞价数据采集失败：{exc}")
+            auction_data = []
+    else:
+        print("\n[open] 昨日无涨停股，竞价数据为空")
+        auction_data = []
+
+    # 4. 生成开盘策略
+    print("\n[LLM] 生成开盘策略...")
+    try:
+        md = generate_open_strategy(indicators, auction_data, plan_text, trade_date)
+    except LLMError as exc:
+        print(f"[open] LLM 开盘策略生成失败：{exc}")
+        return 1
+    out = get_settings().output_dir / f"{trade_date}_开盘策略.md"
+    print(f"\n已生成: {out}")
+    print(f"（{len(md.splitlines())} 行）")
+    return 0
+
+
+def _cmd_update_data(args) -> None:
+    """手动一键更新数据：刷新静态缓存 + 重采近 N 天数据。"""
+    from daily_review.data import eastmoney_pool as em
+    from daily_review.data.local_cache import refresh_all, trade_dates_path
+    from daily_review.pipeline import collect
+
+    trade_date = args.date or _probe_recent_date()
+    if not args.date:
+        print(f"[update-data] 缺省交易日: {trade_date}")
+    days = max(1, args.days)
+
+    # 1. 刷新静态缓存
+    print("\n[update-data] 刷新静态缓存...")
+
+    def _fetch_industry():
+        return em.fetch_stock_industry_map()
+
+    def _fetch_trade_dates():
+        dates = em.resolve_recent_trade_dates(trade_date, n_days=days)
+        return set(dates) if dates else set()
+
+    result = refresh_all(_fetch_industry, _fetch_trade_dates, force=args.force)
+    if result["industry_map"]:
+        print("  行业映射：已刷新")
+    else:
+        print("  行业映射：缓存有效，跳过")
+    if result["trade_dates"]:
+        print("  交易日历：已刷新")
+    else:
+        print("  交易日历：缓存有效，跳过")
+
+    # 2. 遍历近 N 天，重采数据
+    dates = em.resolve_recent_trade_dates(trade_date, n_days=days)
+    print(f"\n[update-data] 重采 {len(dates)} 个交易日数据...")
+    for i, d in enumerate(dates, 1):
+        print(f"  [{i}/{len(dates)}] {d} ...", end=" ", flush=True)
+        try:
+            collected = collect(d)
+            print(f"涨停 {len(collected.get('zt', []))} 家", end="")
+            zb = collected.get("zb", [])
+            if len(zb):
+                print(f" / 炸板 {len(zb)} 家", end="")
+            lhb = collected.get("lhb_daily", [])
+            if len(lhb):
+                print(f" / 龙虎榜 {len(lhb)} 条", end="")
+            print()
+        except Exception as exc:
+            print(f"失败：{type(exc).__name__}: {exc}")
+
+    print(f"\n[update-data] 完成！已更新 {len(dates)} 天数据")
+    return 0
+
+
+def _cmd_split_pool(args) -> None:
+    """供选股数据按日期切分。"""
+    from daily_review.tools import split_stock_pool_by_date
+
+    src = args.src
+    result = split_stock_pool_by_date(src=src)
+    total = sum(result.values())
+    print(f"\n[split-pool] 共 {len(result)} 个日期文件，{total} 行数据")
+    return 0
+
+
 def _cmd_web(args) -> None:
     from daily_review.web.app import create_app
 
+    host = "0.0.0.0" if getattr(args, "lan", False) else args.host
     app = create_app()
-    url = f"http://{args.host}:{args.port}/"
+    url = f"http://{host}:{args.port}/"
     if args.open:
         webbrowser.open(url)
-    print(f"Web 工作台启动: {url}  （Ctrl+C 退出；仅本机访问）")
-    # 无认证服务：默认只绑 127.0.0.1，勿随意暴露到局域网
-    app.run(host=args.host, port=args.port, debug=False, threaded=True)
+    msg = f"Web 工作台启动: {url}  （Ctrl+C 退出）"
+    if host == "0.0.0.0":
+        import socket
+        local_ip = socket.gethostbyname(socket.gethostname())
+        msg += f"\n⚠️ 已暴露到局域网，同网络下可通过 http://{local_ip}:{args.port}/ 访问"
+        msg += "\n   建议仅在可信网络（家庭 Wi-Fi）下使用"
+    else:
+        msg += "；仅本机访问"
+    print(msg)
+    app.run(host=host, port=args.port, debug=False, threaded=True)
 
 
 def _qa_repl(session) -> None:
@@ -302,6 +507,40 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_rev.set_defaults(func=_cmd_review)
 
+    p_plan = sub.add_parser(
+        "plan",
+        help="隔夜预案（9:00 前运行）：基于昨日复盘 + 东财7x24隔夜消息，输出今日关注方向",
+    )
+    p_plan.add_argument("--date", default="", help="今日交易日 YYYYMMDD（预案适用日），缺省探测最近交易日")
+    p_plan.set_defaults(func=_cmd_plan)
+
+    p_open = sub.add_parser(
+        "open",
+        help="开盘策略（9:25-9:30 运行）：基于竞价数据 + 隔夜预案，筛选有机会的个股",
+    )
+    p_open.add_argument("--date", default="", help="今日交易日 YYYYMMDD，缺省探测最近交易日")
+    p_open.set_defaults(func=_cmd_open)
+
+    p_update = sub.add_parser(
+        "update-data",
+        help="手动一键更新数据：刷新静态缓存（行业映射/交易日历）+ 重采近 N 天数据",
+    )
+    p_update.add_argument("--date", default="", help="结束交易日 YYYYMMDD，缺省探测最近交易日")
+    p_update.add_argument("--days", type=int, default=6, help="重采近 N 个交易日（默认 6）")
+    p_update.add_argument(
+        "--force", action="store_true", help="强制刷新静态缓存（无视 TTL）"
+    )
+    p_update.set_defaults(func=_cmd_update_data)
+
+    p_split = sub.add_parser(
+        "split-pool",
+        help="供选股数据.csv 按日期切分到 data/stock_pool/",
+    )
+    p_split.add_argument(
+        "--src", default="", help="源 CSV 路径（缺省为项目根目录 供选股数据.csv）"
+    )
+    p_split.set_defaults(func=_cmd_split_pool)
+
     p_dash = sub.add_parser(
         "dashboard",
         help="数据看板：近 N 日趋势图表（单文件 HTML）+ LLM 多日解读",
@@ -337,6 +576,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1，仅本机；无认证，勿暴露局域网）"
     )
     p_web.add_argument("--port", type=int, default=5000, help="监听端口（默认 5000）")
+    p_web.add_argument(
+        "--lan", action="store_true", help="允许局域网访问（绑定 0.0.0.0，同网络设备可访问）"
+    )
     p_web.add_argument(
         "--open", action="store_true", help="启动后用系统默认浏览器打开"
     )

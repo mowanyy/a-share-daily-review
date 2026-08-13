@@ -65,8 +65,17 @@ class TestZBPoolParse:
 
 
 class TestRecentTradeDates:
+    @staticmethod
+    def _mock_cache(monkeypatch):
+        """隔离真实交易日历缓存（避免上次 update-data 实测数据污染断言）。"""
+        import daily_review.data.local_cache as lc
+
+        monkeypatch.setattr(lc, "load_trade_dates", lambda: set())
+        monkeypatch.setattr(lc, "add_trade_dates", lambda dates: None)
+
     def test_probe_skips_empty_days(self, monkeypatch):
         # 8/8(六)、8/7(五) 空 → 应回退到 8/6(四)
+        self._mock_cache(monkeypatch)
         def fake_pool_json(endpoint, date, pagesize=300):
             return [] if date in ("20260808", "20260807") else [{"c": "1", "n": "x"}]
         monkeypatch.setattr(em, "_pool_json", fake_pool_json)
@@ -75,6 +84,7 @@ class TestRecentTradeDates:
 
     def test_probe_returns_multiple(self, monkeypatch):
         # 交易日 8/4,8/5,8/6 有数据；8/7,8/8 空
+        self._mock_cache(monkeypatch)
         valid = {"20260806", "20260805", "20260804"}
         def fake_pool_json(endpoint, date, pagesize=300):
             return [{"c": "1", "n": "x"}] if date in valid else []

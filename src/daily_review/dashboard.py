@@ -248,6 +248,16 @@ body { margin: 0; background: var(--bg); color: var(--ink);
   background: rgba(31,111,235,.16); color: var(--chip); }
 .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
 @media (max-width: 900px) { .charts { grid-template-columns: 1fr; } }
+@media (max-width: 767px) {
+  .board { padding: 12px 10px 32px; }
+  .board-head h1 { font-size: 18px; }
+  .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+  .kpi { padding: 10px 12px; }
+  .kpi .value { font-size: 24px; }
+  .panel { padding: 10px 12px; }
+  table { font-size: 11px; }
+  th, td { padding: 4px 5px; }
+}
 figure { margin: 0; background: var(--panel); border: 1px solid var(--border);
   border-radius: 10px; padding: 14px 16px; }
 figcaption { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
@@ -259,8 +269,8 @@ table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border);
   white-space: nowrap; }
 /* 表格容器横向溢出兜底：内容超宽时出现横向滚动条而非裁掉文字
-   （连板梯队「炸板/弱封」/题材/炸板/龙虎榜行数或单元格可随涨停家数暴涨） */
-#ladder, #themes, #break, #lhb { overflow-x: auto; }
+	   （连板梯队「炸板/弱封」/题材/炸板/龙虎榜行数或单元格可随涨停家数暴涨） */
+	#ladder, #themes, #break, #lhb, #trend-summary, #emotion-comp { overflow-x: auto; }
 th { color: var(--ink-2); font-weight: 600; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tbody tr:nth-child(even) { background: rgba(128,128,128,.05); }

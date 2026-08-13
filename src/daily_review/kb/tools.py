@@ -174,6 +174,91 @@ def _tool_themes_timeline(ctx: DataToolContext, args: dict) -> dict:
     return {"theme_name": theme_name, "timeline": rows}
 
 
+# ---------------------------------------------------------------- 概念池工具（v0.14）
+
+def _normalize_stocks_input(raw) -> list[dict]:
+    """把 stocks 参数归一为 [{code,name,note}]：支持 dict(批量) 或 list。"""
+    stocks: list[dict] = []
+    if isinstance(raw, dict):
+        raw = [{"code": c, "name": n} for c, n in raw.items()]
+    for s in raw or []:
+        if isinstance(s, str):
+            stocks.append({"code": s, "name": ""})
+        elif isinstance(s, dict):
+            stocks.append(s)
+    return stocks
+
+
+def _tool_concept_pool_create(ctx: DataToolContext, args: dict) -> dict:
+    from daily_review.web.concept_pool import create_pool
+
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"error": "缺少 name 参数（概念池名称）"}
+    try:
+        result = create_pool(name, description=str(args.get("description") or ""))
+        result["hint"] = "创建后可用 concept_pool_add_stocks 添加股票"
+        return result
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+def _tool_concept_pool_delete(ctx: DataToolContext, args: dict) -> dict:
+    from daily_review.web.concept_pool import delete_pool
+
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"error": "缺少 name 参数（概念池名称）"}
+    return delete_pool(name)
+
+
+def _tool_concept_pool_add_stocks(ctx: DataToolContext, args: dict) -> dict:
+    from daily_review.web.concept_pool import add_stocks
+
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"error": "缺少 name 参数（概念池名称）"}
+    stocks = _normalize_stocks_input(args.get("stocks"))
+    if not stocks:
+        return {"error": "缺少 stocks 参数（要添加的股票代码/名称）"}
+    try:
+        return add_stocks(name, stocks)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
+def _tool_concept_pool_remove_stocks(ctx: DataToolContext, args: dict) -> dict:
+    from daily_review.web.concept_pool import remove_stocks
+
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"error": "缺少 name 参数（概念池名称）"}
+    codes = str(args.get("codes") or "").strip()
+    codes_list = [c.strip() for c in codes.replace("，", ",").split(",") if c.strip()]
+    if not codes_list:
+        return {"error": "缺少 codes 参数（逗号分隔的股票代码）"}
+    return remove_stocks(name, codes_list)
+
+
+def _tool_concept_pool_list(ctx: DataToolContext, args: dict) -> dict:
+    from daily_review.web.concept_pool import list_pools
+
+    pools = list_pools()
+    return {"concept_pools": pools, "count": len(pools)}
+
+
+def _tool_concept_pool_query(ctx: DataToolContext, args: dict) -> dict:
+    from daily_review.web.concept_pool import query_pool
+
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"error": "缺少 name 参数（概念池名称）"}
+    stocks = query_pool(name)
+    if stocks is None:
+        return {"error": f"概念池「{name}」不存在", "available": [p["name"] for p in list_pools()]}
+    return {"name": name, "stock_count": len(stocks), "stocks": stocks}
+
+
 # 工具名 → 处理器（name 即 function-calling 的 function name）
 _TOOL_HANDLERS: dict[str, callable] = {
     "query_zt_pool": _tool_zt_pool,
@@ -182,6 +267,13 @@ _TOOL_HANDLERS: dict[str, callable] = {
     "query_ladder_stats": _tool_ladder_stats,
     "query_theme": _tool_theme,
     "query_themes_timeline": _tool_themes_timeline,
+    # v0.14 概念池
+    "concept_pool_create": _tool_concept_pool_create,
+    "concept_pool_delete": _tool_concept_pool_delete,
+    "concept_pool_add_stocks": _tool_concept_pool_add_stocks,
+    "concept_pool_remove_stocks": _tool_concept_pool_remove_stocks,
+    "concept_pool_list": _tool_concept_pool_list,
+    "concept_pool_query": _tool_concept_pool_query,
 }
 
 TOOL_NAMES: list[str] = list(_TOOL_HANDLERS)
@@ -283,6 +375,104 @@ def get_tool_schemas() -> list[dict]:
                         "days": {"type": "integer", "description": "近 N 个交易日，缺省 5"},
                     },
                     "required": ["theme_name"],
+                },
+            },
+        },
+        # ---------- v0.14 概念池工具 ----------
+        {
+            "type": "function",
+            "function": {
+                "name": "concept_pool_create",
+                "description": "创建概念池（短线炒作题材的股票池）。如创建“低空经济概念”。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "概念池名称，如 低空经济、AI概念"},
+                        "description": {"type": "string", "description": "可选描述"},
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "concept_pool_delete",
+                "description": "删除概念池（会删除其中所有股票）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "概念池名称"},
+                    },
+                    "required": ["name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "concept_pool_add_stocks",
+                "description": "向概念池添加股票。支持批量添加。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "概念池名称"},
+                        "stocks": {
+                            "type": "array",
+                            "description": "股票列表，每项 {code, name, note?}。也可传对象 {code: name} 或代码字符串列表",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {"type": "string", "description": "6位股票代码"},
+                                    "name": {"type": "string", "description": "股票名称"},
+                                    "note": {"type": "string", "description": "添加备注"},
+                                },
+                                "required": ["code"],
+                            },
+                        },
+                    },
+                    "required": ["name", "stocks"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "concept_pool_remove_stocks",
+                "description": "从概念池移除股票。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "概念池名称"},
+                        "codes": {"type": "string", "description": "逗号分隔的股票代码，如 600001,600002"},
+                    },
+                    "required": ["name", "codes"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "concept_pool_list",
+                "description": "列出所有概念池（名称、股票数量、创建时间）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "concept_pool_query",
+                "description": "查询概念池中的股票列表（代码、名称、添加日期、备注）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "概念池名称"},
+                    },
+                    "required": ["name"],
                 },
             },
         },

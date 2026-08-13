@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}概念池 · 每日复盘{% endblock %}
+{% block content %}
+<h1>概念池</h1>
+<div class="panel">
+  <div class="row" style="justify-content:space-between">
+    <p class="muted" style="flex:1;margin:0">
+      按短线炒作题材维护的股票池（如 AI概念 / 低空经济 / 机器人）。每个概念一个文件落盘
+      <code>data/stock_pool/concepts/</code>（gitignored，不入项目），并自动同步到
+      <code>knowledge/概念池/</code> 供问答检索。板块启动时新建概念池、添加成分股。
+    </p>
+    <button class="btn primary" id="btnNew">新建概念池</button>
+  </div>
+  <div id="list" style="margin-top:12px"></div>
+</div>
+
+<div class="panel" id="editor" hidden>
+  <h2 id="edTitle">新建概念池</h2>
+  <input type="hidden" id="edName">
+  <div class="row">
+    <div style="flex:2"><label>概念池名称 *</label><input type="text" id="edPoolName" placeholder="如：AI概念、低空经济"></div>
+    <div style="flex:3"><label>新增成分股（代码:名称:备注，一行一个或逗号分隔）</label>
+      <input type="text" id="edStocks" placeholder="如：003032:传智教育:AI教育 / 002230:科大讯飞:AI语音龙头"></div>
+    <button class="btn primary" id="btnAddStocks">添加</button>
+  </div>
+  <div style="margin-top:10px">
+    <label>已有成分股</label>
+    <div class="table-wrap">
+    <table id="edStockTable">
+      <thead><tr><th>代码</th><th>名称</th><th>添加日期</th><th>备注</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    </div>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <button class="btn danger" id="btnDeletePool">删除整个概念池</button>
+    <button class="btn" id="btnClose">关闭</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var listEl = document.getElementById('list');
+var curName = '';
+
+function renderItems(pools){
+  listEl.innerHTML = (pools||[]).map(function(p){
+    return '<div class="panel" style="margin-bottom:10px">'
+      + '<div class="row" style="justify-content:space-between">'
+      + '<div><strong>' + esc(p.name) + '</strong>'
+      + '<span class="badge">' + esc(p.stock_count) + ' 只</span></div>'
+      + '<div><button class="btn" data-view="' + esc(p.name) + '">查看/编辑</button></div>'
+      + '</div>'
+      + '<div class="muted">创建于 ' + esc(p.created_at || '') + '</div>'
+      + '</div>';
+  }).join('') || '<span class="muted">暂无概念池，点击「新建概念池」创建。</span>';
+}
+function load(){
+  api('/api/concept-pools').then(function(d){ renderItems(d.concept_pools); })
+    .catch(function(e){ alert(e.message); });
+}
+function openEditor(name){
+  api('/api/concept-pools/' + encodeURIComponent(name)).then(function(d){
+    curName = name;
+    document.getElementById('edTitle').textContent = '概念池：' + name;
+    document.getElementById('edPoolName').value = '';
+    document.getElementById('edStocks').value = '';
+    renderStocks(d.stocks || []);
+    document.getElementById('editor').hidden = false;
+  }).catch(function(e){ alert(e.message); });
+}
+function renderStocks(stocks){
+  var tb = document.querySelector('#edStockTable tbody');
+  tb.innerHTML = (stocks||[]).map(function(s){
+    return '<tr><td>' + esc(s.code) + '</td><td>' + esc(s.name) + '</td>'
+      + '<td>' + esc(s.added_date || '') + '</td><td>' + esc(s.note || '') + '</td>'
+      + '<td><button class="btn danger" data-rm="' + esc(s.code) + '">移除</button></td></tr>';
+  }).join('') || '<tr><td colspan="5" class="muted">空池，添加成分股</td></tr>';
+}
+document.getElementById('btnNew').onclick = function(){
+  var name = prompt('概念池名称：');
+  if(!name || !name.trim()) return;
+  api('/api/concept-pools', {method:'POST', body:JSON.stringify({name:name.trim()})})
+    .then(load).catch(function(e){ alert(e.message); });
+};
+document.getElementById('btnClose').onclick = function(){ document.getElementById('editor').hidden = true; };
+document.getElementById('btnAddStocks').onclick = function(){
+  var name = curName;
+  var raw = document.getElementById('edStocks').value.trim();
+  if(!name || !raw) return;
+  var stocks = raw.split(/[,\n；;]/).map(function(x){ return x.trim(); }).filter(Boolean)
+    .map(function(x){
+      var parts = x.split(':');
+      return {code: parts[0].trim(), name: (parts[1]||'').trim(), note: (parts[2]||'').trim()};
+    });
+  api('/api/concept-pools/' + encodeURIComponent(name) + '/stocks',
+      {method:'POST', body:JSON.stringify({stocks: stocks})})
+    .then(function(r){
+      document.getElementById('edStocks').value = '';
+      load();
+      openEditor(name);
+      // alert('新增 ' + r.added + ' 只，跳过 ' + r.skipped + ' 只（重复/空代码）');
+    })
+    .catch(function(e){ alert(e.message); });
+};
+document.getElementById('btnDeletePool').onclick = function(){
+  if(!confirm('确认删除整个概念池「' + curName + '」？该操作不可撤销。')) return;
+  api('/api/concept-pools/' + encodeURIComponent(curName), {method:'DELETE'})
+    .then(function(){
+      document.getElementById('editor').hidden = true;
+      load();
+    }).catch(function(e){ alert(e.message); });
+};
+listEl.addEventListener('click', function(ev){
+  if(ev.target.dataset.view){ openEditor(ev.target.dataset.view); }
+});
+document.querySelector('#edStockTable').addEventListener('click', function(ev){
+  if(ev.target.dataset.rm){
+    api('/api/concept-pools/' + encodeURIComponent(curName) + '/stocks',
+        {method:'DELETE', body:JSON.stringify({codes: ev.target.dataset.rm})})
+      .then(function(){ load(); openEditor(curName); })
+      .catch(function(e){ alert(e.message); });
+  }
+});
+load();
+</script>
+{% endblock %}

@@ -26,6 +26,8 @@
 | `module.lhb` | [modules/龙虎榜游资.md](modules/龙虎榜游资.md) | report | 龙虎榜榜单、买卖席位、涨停池 | 龙虎榜游资章节 | draft |
 | `module.plan` | [modules/次日预案.md](modules/次日预案.md) | report | 当日复盘 + 战法 | 次日预案章节 | draft |
 | `module.hotspot` | [modules/热点信息简报.md](modules/热点信息简报.md) | report | 概念板块行情、当日题材 | 当日热点主线简报 | draft |
+| `module.overnight` | [modules/隔夜预案.md](modules/隔夜预案.md) | report | 昨日复盘 + 东财7x24隔夜消息 | 隔夜预案（消息面联动关注方向） | draft |
+| `module.open_strategy` | [modules/开盘策略.md](modules/开盘策略.md) | report | 昨日复盘 + 隔夜预案 + 竞价数据 | 开盘策略（有机会个股清单） | draft |
 | `strategy.template` | [strategies/战法模板.md](strategies/战法模板.md) | strategy | —（模板） | 战法文件结构 | draft |
 | `strategy.example` | [strategies/示例-连板接力.md](strategies/示例-连板接力.md) | strategy | —（示例） | 示范战法 | draft |
 | `example.report` | [examples/复盘示例_20260806.md](examples/复盘示例_20260806.md) | example | 示意数据 | 复盘范文 | draft |
@@ -37,14 +39,18 @@
 
 ```
 报告模式（自动复盘）
-  system.analyst
-    ├─ module.emotion   → 情绪温度章节（市场级定位）
-    ├─ module.ladder    → 连板梯队章节
-    ├─ module.theme     → 题材归类章节
-    ├─ module.break     → 炸板资金章节
-    ├─ module.lhb       → 龙虎榜游资章节
-    ├─ module.plan      → 次日预案章节（引用 strategy.* 战法）
-    └─ module.hotspot   → 模型 B 独立提炼当日热点简报，注入 一总览/四题材/七预案（不新增章节）
+	  system.analyst
+	    ├─ module.emotion   → 情绪温度章节（市场级定位）
+	    ├─ module.ladder    → 连板梯队章节
+	    ├─ module.theme     → 题材归类章节
+	    ├─ module.break     → 炸板资金章节
+	    ├─ module.lhb       → 龙虎榜游资章节
+	    ├─ module.plan      → 次日预案章节（引用 strategy.* 战法）
+	    └─ module.hotspot   → 模型 B 独立提炼当日热点简报，注入 一总览/四题材/七预案（不新增章节）
+
+	盘前模式（隔夜预案 + 开盘策略，v0.13）
+	  module.overnight     → 隔夜预案（消息面汇总 → 题材联动 → 关注方向）
+	  module.open_strategy → 开盘策略（竞价总览 → 有机会个股清单 → 开盘执行提示）
 
 看板模式（数据看板 + LLM 多日趋势解读）
   module.dashboard → 「多日趋势解读」一段（数据看板主体为程序核算图表，

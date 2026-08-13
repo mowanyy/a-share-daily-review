@@ -68,6 +68,50 @@ output: 问答模式可用工具的 JSON Schema（function-calling 契约）
 返回: 每日期：member_count max_lb leader
 ```
 
+### 7. `concept_pool_create` — 创建概念池（短线题材股票池）
+```
+入参:
+  name: string "低空经济"
+  description?: string
+返回: { name, status: created|exists, stock_count }
+```
+
+### 8. `concept_pool_delete` — 删除概念池
+```
+入参:
+  name: string
+返回: { name, status: deleted|not_found }
+```
+
+### 9. `concept_pool_add_stocks` — 向概念池添加股票
+```
+入参:
+  name: string
+  stocks: [{ code, name?, note? }]   # 也接受 {code:name} 对象或代码字符串列表
+返回: { name, added, skipped, total }
+```
+
+### 10. `concept_pool_remove_stocks` — 从概念池移除股票
+```
+入参:
+  name: string
+  codes: string "600001,600002"
+返回: { name, removed, remaining }
+```
+
+### 11. `concept_pool_list` — 列出所有概念池
+```
+入参: 无
+返回: { concept_pools: [{ name, stock_count, created_at }], count }
+```
+
+### 12. `concept_pool_query` — 查询概念池中的股票
+```
+入参:
+  name: string
+返回: { name, stock_count, stocks: [{ code, name, added_date, note }] }
+```
+
 ## 工具返回约定
 
 1. 字段名统一 snake_case，与 `docs/数据结构.md` 一致

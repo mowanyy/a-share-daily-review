@@ -52,6 +52,7 @@ class LauncherApp(tk.Tk):
         self.no_llm_var = tk.BooleanVar(value=False)
         self.days_var = tk.IntVar(value=10)
         self.port_var = tk.IntVar(value=5000)
+        self.lan_var = tk.BooleanVar(value=False)
         self.strategy_var = tk.StringVar()
 
         self._build_ui()
@@ -90,11 +91,12 @@ class LauncherApp(tk.Tk):
         ttk.Spinbox(opts, from_=2, to=30, textvariable=self.days_var, width=5).grid(row=0, column=4)
         ttk.Label(opts, text="端口").grid(row=0, column=5, padx=(12, 2))
         ttk.Entry(opts, textvariable=self.port_var, width=7).grid(row=0, column=6)
-        ttk.Label(opts, text="战法").grid(row=0, column=7, padx=(12, 2))
+        ttk.Checkbutton(opts, text="局域网访问", variable=self.lan_var).grid(row=0, column=7, padx=(4, 2))
+        ttk.Label(opts, text="战法").grid(row=0, column=8, padx=(4, 2))
         self._strategy_box = ttk.Combobox(opts, textvariable=self.strategy_var,
                                           state="readonly", width=18)
-        self._strategy_box.grid(row=0, column=8, padx=(2, 8), pady=6)
-        opts.columnconfigure(9, weight=1)
+        self._strategy_box.grid(row=0, column=9, padx=(2, 8), pady=6)
+        opts.columnconfigure(10, weight=1)
         self._refresh_strategies()
 
         ctl = ttk.Frame(self)
@@ -179,7 +181,8 @@ class LauncherApp(tk.Tk):
             port = int(self.port_var.get())
         except (ValueError, tk.TclError):
             port = 5000
-        argv = launcher.build_web_argv(self.runtime, open_=True, port=port)
+        host = "0.0.0.0" if self.lan_var.get() else "127.0.0.1"
+        argv = launcher.build_web_argv(self.runtime, open_=True, port=port, host=host)
         self._start(argv, "Web 工作台")
 
     def _on_review(self):
