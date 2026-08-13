@@ -62,13 +62,16 @@ v0.12.1：LLM 后端切换商汤 SenseNova（主）+ 官方 DeepSeek 自动兜�
 	      （data/stock_pool/concepts/{概念名}.csv），Agent 通过 6 个 function-calling 工具
 	      增删改查概念股票池，自动同步到 knowledge/概念池/ 供 RAG 检索；新增 tools/stock_pool.py
 	      供选股数据按日期切分（split-pool 命令）；新增 6 个概念池工具 schema 更新。
-	v0.15：Web 工作台移动端适配 + 局域网访问——base.html 全局媒体查询（≤767px 单列布局、
-	      导航紧凑/表单堆叠/按钮触控/表格可横滑），dashboard.py 自包含看板适配手机端
-	      （KPI 网格列宽/字号/表格溢出），review/concepts 页面微调；新增文档
-	      docs/移动端适配方案.md（响应式设计规范 9 章）；CLI web 新增 --lan 快捷参数
-	      （等价 --host 0.0.0.0，启动打印局域网访问地址），图形启动器加「局域网访问」
-	      复选框（launcher.build_web_argv 支持 host）。家人手机同 Wi-Fi 浏览器
-	      打开 http://<笔记本IP>:5000 即可查看。257 测试通过。
+v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767px 单列布局、
+	      导航紧凑/表单堆叠/按钮触控/表格可横滑 .table-wrap），dashboard.py 自包含
+	      看板适配手机端（KPI 网格列宽/字号缩放/表格溢出），review/concepts 页面微调；
+	      新增文档 docs/移动端适配方案.md（响应式设计规范 9 章）。CLI web 曾新增
+	      --lan 局域网参数与启动器复选框，因开发环境（公司网络）不使用网络分享已回退
+	      （v0.15.1）。257 测试通过。
+	v0.15.1：回退「局域网访问」功能——cli.py 移除 --lan 参数与启动打印局域网地址、
+	      launcher.py build_web_argv 还原为固定 127.0.0.1、launcher_gui.py 移除
+	      「局域网访问」复选框；web --host 参数保留（默认 127.0.0.1 仅本机）。
+	      移动端适配保留。257 测试通过。
 """
 
-__version__ = "0.15.0"
+__version__ = "0.15.1"

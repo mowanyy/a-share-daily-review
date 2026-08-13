@@ -374,21 +374,13 @@ def _cmd_split_pool(args) -> None:
 def _cmd_web(args) -> None:
     from daily_review.web.app import create_app
 
-    host = "0.0.0.0" if getattr(args, "lan", False) else args.host
     app = create_app()
-    url = f"http://{host}:{args.port}/"
+    url = f"http://{args.host}:{args.port}/"
     if args.open:
         webbrowser.open(url)
-    msg = f"Web 工作台启动: {url}  （Ctrl+C 退出）"
-    if host == "0.0.0.0":
-        import socket
-        local_ip = socket.gethostbyname(socket.gethostname())
-        msg += f"\n⚠️ 已暴露到局域网，同网络下可通过 http://{local_ip}:{args.port}/ 访问"
-        msg += "\n   建议仅在可信网络（家庭 Wi-Fi）下使用"
-    else:
-        msg += "；仅本机访问"
-    print(msg)
-    app.run(host=host, port=args.port, debug=False, threaded=True)
+    print(f"Web 工作台启动: {url}  （Ctrl+C 退出；仅本机访问）")
+    # 无认证服务：默认只绑 127.0.0.1，勿随意暴露到局域网
+    app.run(host=args.host, port=args.port, debug=False, threaded=True)
 
 
 def _qa_repl(session) -> None:
@@ -576,9 +568,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--host", default="127.0.0.1", help="监听地址（默认 127.0.0.1，仅本机；无认证，勿暴露局域网）"
     )
     p_web.add_argument("--port", type=int, default=5000, help="监听端口（默认 5000）")
-    p_web.add_argument(
-        "--lan", action="store_true", help="允许局域网访问（绑定 0.0.0.0，同网络设备可访问）"
-    )
     p_web.add_argument(
         "--open", action="store_true", help="启动后用系统默认浏览器打开"
     )

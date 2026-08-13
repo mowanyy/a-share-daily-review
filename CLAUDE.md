@@ -8,7 +8,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
-`v0.15.0`：**Web 工作台移动端适配 + 局域网访问**——家人手机/平板同 Wi-Fi 浏览器即可打开复盘看板。① 移动端适配：`base.html` 全局媒体查询（≤767px 单列布局、导航紧凑/表单堆叠/按钮触控优化/表格可横滑 `.table-wrap`），`dashboard.py` 自包含看板适配手机端（KPI 网格列宽/字号缩放/`#trend-summary` `#emotion-comp` 加 `overflow-x:auto`），`review.html`/`concepts.html` 页面微调；新增设计规范文档 `docs/移动端适配方案.md`（9 章：设计原则/断点体系/组件规范/CSS 模式/测试方法，可复用为 skill）。② 局域网访问：CLI `web` 新增 `--lan` 快捷参数（等价 `--host 0.0.0.0`，启动打印局域网访问地址 `http://<本机IP>:5000`），图形启动器选项面板新增「局域网访问」复选框（`launcher.py::build_web_argv` 支持 `host` 参数），`launcher_gui.py` 传 `--lan`。**无认证，建议仅家庭可信网络使用**。257 测试通过。
+`v0.15.1`：**Web 工作台移动端适配（保留）+ 局域网访问（已回退）**——① 移动端适配：`base.html` 全局媒体查询（≤767px 单列布局、导航紧凑/表单堆叠/按钮触控优化/表格可横滑 `.table-wrap`），`dashboard.py` 自包含看板适配手机端（KPI 网格列宽/字号缩放/`#trend-summary` `#emotion-comp` 加 `overflow-x:auto`），`review.html`/`concepts.html` 页面微调；新增设计规范文档 `docs/移动端适配方案.md`（9 章：设计原则/断点体系/组件规范/CSS 模式/测试方法）。② v0.15.0 曾实现 `web --lan` 快捷参数 + 启动器「局域网访问」复选框，**因当前处于公司网络、不使用网络分享，v0.15.1 已全部回退**：cli.py 移除 `--lan`、launcher.py `build_web_argv` 还原固定 `127.0.0.1`、launcher_gui.py 移除复选框；`--host` 参数保留（默认 `127.0.0.1` 仅本机，无认证不对外暴露）。257 测试通过。
 
 `v0.14.0`：**看板数据本地化加速 + 概念池 Agent 管理**——补上 3 块静态缓存到 `data/cache/`（行业映射 `industry_map.csv` 7天TTL / 概念成分 `board_constituents/{code}.csv` 3天TTL / 交易日历 `trade_dates.csv`），省约 72s/次网络开销；新增 `data/local_cache.py`；pipeline 行业映射/概念成分、eastmoney_pool 交易日历均走缓存。新增 `update-data` CLI 命令（`python -m daily_review update-data [--days N] [--date] [--force]`，刷新缓存+重采近N天）与 Web「更新数据」按钮。新增**概念池 CRUD** 服务 `web/concept_pool.py`（落盘 `data/stock_pool/concepts/{概念名}.csv`，gitignored），Agent 通过 6 个 function-calling 工具（`concept_pool_create/delete/add_stocks/remove_stocks/list/query`）对短线题材股票池增删改查，自动同步到 `knowledge/概念池/*.md` 供 RAG 检索；Web 新增 `/concepts` 管理页。新增 `tools/stock_pool.py` 供选股数据按日期切分（`split-pool` 命令 → 218 个 `data/stock_pool/{日期}.csv`）。工具 schema 更新至 12 个。257 测试通过。
 
@@ -40,8 +40,6 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806 --strategy strategy.user-xxx
 # Web 工作台（Flask）：战法管理 / 跑复盘看报告与次日预案 / 问答 / 数据看板（默认仅本机 127.0.0.1:5000；--open 用系统浏览器打开）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review web --open
-# 局域网访问（家人手机同 Wi-Fi 浏览器打开 http://<本机IP>:5000；无认证，仅家庭可信网络使用）
-"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review web --lan --open
 # 数据看板：近 10 个交易日趋势（单文件 output/{date}_看板.html）+ LLM 多日趋势解读（--no-llm 跳过解读）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806 --no-llm
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806 --open
