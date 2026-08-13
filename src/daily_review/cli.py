@@ -513,7 +513,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_kline = sub.add_parser("kline", help="东方财富日 K 线")
     p_kline.add_argument("--code", required=True, help="股票代码，如 600000")
     p_kline.add_argument("--lmt", type=int, default=120, help="返回条数（默认 120）")
-    p_kline.add_argument("--klt", type=int, default=101, help="周期 101=日线 102=周线")
+    p_kline.add_argument("--klt", type=int, default=101, help="周期 101=日线 102=周线 103=月线（基金风格周K/月K分析用）")
     p_kline.add_argument("--fqt", type=int, default=0, help="复权 0=不复权 1=前复权 2=后复权")
     p_kline.set_defaults(func=_cmd_kline)
 

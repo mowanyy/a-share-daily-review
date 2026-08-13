@@ -218,3 +218,42 @@ def test_corpus_discovers_skills(tmp_path):
     chunks = chunk_file(f, root=tmp_path / "proj")
     assert chunks
     assert any("优质公司" in ch.text for ch in chunks)  # front-matter 剥离后正文可检索
+
+
+# ---------------------------------------------------------------- 基金风格档案结构
+
+# 需求锁定（v0.17.1）：基金风格必须以周K/月K 进行（周一/月初触发），档案内须有对应方法论
+FUND_STYLE_FILES = [
+    "深度价值-张坤型.md",
+    "景气成长-刘格菘型.md",
+    "低估值-丘栋荣型.md",
+    "医药成长-葛兰型.md",
+]
+
+
+def test_fund_style_skills_have_timeframe_section():
+    from daily_review.config import PROJECT_ROOT
+    from daily_review.prompts import _parse_front_matter
+
+    root = PROJECT_ROOT / "skills" / "fund-styles"
+    files = [p.name for p in root.glob("*.md")]
+    assert set(files) == set(FUND_STYLE_FILES)  # 4 个档案都在
+
+    for name in FUND_STYLE_FILES:
+        text = (root / name).read_text(encoding="utf-8")
+        meta = _parse_front_matter(text)
+        assert meta is not None and meta.get("name") and meta.get("description"), name
+        assert "## 0. 时间周期与触发时点" in text, name
+        assert "周K" in text and "月K" in text, name
+        assert "klt 102" in text and "klt 103" in text, name
+        assert "每周一" in text and "每月 1 号" in text, name  # 触发时点
+
+
+def test_fund_style_usage_doc_has_rhythm():
+    """使用说明文档须包含周K/月K 使用节奏（周一/月初）。"""
+    from daily_review.config import PROJECT_ROOT
+
+    text = (PROJECT_ROOT / "docs" / "基金风格skill使用说明.md").read_text(encoding="utf-8")
+    assert "## 使用节奏" in text
+    assert "每周一" in text and "每月 1 号" in text
+    assert "klt 102" in text and "klt 103" in text
