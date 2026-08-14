@@ -47,6 +47,7 @@
       <button class="btn" id="btnDash">查看该日看板</button>
     </div>
   </div>
+  <div id="histTypeSwitcher" style="margin-top:8px;display:none"></div>
   <div id="report" style="margin-top:8px"></div>
 </div>
 {% endblock %}
@@ -178,34 +179,92 @@ document.getElementById('btnDash').onclick = function(){
   var d = curDate || document.getElementById('date').value.trim();
   window.location.href = '/dashboard' + (d ? ('?date=' + d) : '');
 };
+/* 历史报告数据（用于多类型切换） */
+var histData = null;  // 当前查看日期的 list_reports 条目
+
 function loadHistory(){
   api('/api/review/history').then(function(d){
     var sel = document.getElementById('histDate');
     var hint = document.getElementById('histHint');
-    var reports = (d.reports || []).filter(function(r){ return r.has_review; });
+    /* 显示有任一产物的日期（不限于 has_review） */
+    var reports = (d.reports || []).filter(function(r){
+      return r.has_review || r.has_overnight || r.has_open;
+    });
     if(!reports.length){
-      hint.textContent = '暂无历史复盘报告（先跑一次复盘，之后重启 Web 也能查看）';
+      hint.textContent = '暂无历史报告（先跑一次复盘/隔夜预案/开盘策略，之后重启 Web 也能查看）';
       return;
     }
     sel.innerHTML = '<option value="">选择日期…</option>' + reports.map(function(r){
       var extra = [];
+      if(r.has_review) extra.push('复盘');
       if(r.has_overnight) extra.push('隔夜');
       if(r.has_open) extra.push('开盘');
       if(r.has_dashboard) extra.push('看板');
-      return '<option value="' + esc(r.date) + '">' + r.date
-        + (extra.length ? '（' + extra.join('/') + '）' : '') + '</option>';
+      return '<option value="' + esc(r.date) + '"'
+        + ' data-has-review="' + (r.has_review ? '1' : '0') + '"'
+        + ' data-has-overnight="' + (r.has_overnight ? '1' : '0') + '"'
+        + ' data-has-open="' + (r.has_open ? '1' : '0') + '"'
+        + '>' + r.date + (extra.length ? '（' + extra.join('/') + '）' : '') + '</option>';
     }).join('');
-    hint.textContent = '共 ' + reports.length + ' 天历史复盘，选日期后点「查看」';
+    hint.textContent = '共 ' + reports.length + ' 天历史，选日期后点「查看」';
   }).catch(function(){});
 }
 function viewHistory(){
-  var d = document.getElementById('histDate').value;
+  var sel = document.getElementById('histDate');
+  var d = sel.value;
   if(!d){ return; }
-  api('/api/review/history/' + d).then(function(j){
-    /* 历史报告按复盘任务处理：全文/只看预案按钮照常工作（btnPlan 依 curTask 显示） */
-    curTask = 'review';
+  /* 确定最佳类型：review > plan > open */
+  var opt = sel.options[sel.selectedIndex];
+  var hasReview = opt && opt.dataset.hasReview === '1';
+  var hasOvernight = opt && opt.dataset.hasOvernight === '1';
+  var hasOpen = opt && opt.dataset.hasOpen === '1';
+  var type = hasReview ? 'review' : hasOvernight ? 'plan' : 'open';
+  /* 加载历史 */
+  api('/api/review/history/' + d + '?type=' + type).then(function(j){
+    curTask = j.task_type || 'review';
     showResult(j);
-    document.getElementById('resultMeta').textContent = j.trade_date + ' · 历史复盘';
+    document.getElementById('resultMeta').textContent = j.trade_date + ' · 历史'
+      + (j.task_type === 'plan' ? '隔夜预案'
+        : j.task_type === 'open' ? '开盘策略'
+        : '复盘');
+    /* 多类型切换按钮 */
+    var typeBtns = [];
+    if(hasReview) typeBtns.push({t: 'review', label: '复盘'});
+    if(hasOvernight) typeBtns.push({t: 'plan', label: '隔夜预案'});
+    if(hasOpen) typeBtns.push({t: 'open', label: '开盘策略'});
+    var typeDiv = document.getElementById('histTypeSwitcher');
+    if(typeBtns.length > 1){
+      typeDiv.innerHTML = typeBtns.map(function(item){
+        var active = item.t === curTask ? ' primary' : '';
+        return '<button class="btn' + active + '" data-type="' + item.t + '">' + item.label + '</button>';
+      }).join('');
+      typeDiv.style.display = 'block';
+      /* 绑定切换事件 */
+      typeDiv.querySelectorAll('button').forEach(function(btn){
+        btn.onclick = function(){
+          switchHistType(this.dataset.type);
+        };
+      });
+    } else {
+      typeDiv.style.display = 'none';
+    }
+  }).catch(function(e){ alert(e.message); });
+}
+function switchHistType(type){
+  var d = document.getElementById('histDate').value;
+  if(!d) return;
+  api('/api/review/history/' + d + '?type=' + type).then(function(j){
+    curTask = j.task_type || type;
+    showResult(j);
+    document.getElementById('resultMeta').textContent = j.trade_date + ' · 历史'
+      + (j.task_type === 'plan' ? '隔夜预案'
+        : j.task_type === 'open' ? '开盘策略'
+        : '复盘');
+    /* 更新按钮高亮 */
+    var typeDiv = document.getElementById('histTypeSwitcher');
+    typeDiv.querySelectorAll('button').forEach(function(btn){
+      btn.classList.toggle('primary', btn.dataset.type === type);
+    });
   }).catch(function(e){ alert(e.message); });
 }
 document.getElementById('btnHistView').onclick = viewHistory;

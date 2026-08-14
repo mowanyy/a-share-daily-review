@@ -350,15 +350,22 @@ def api_review_history():
 
 @api_bp.get("/api/review/history/<date>")
 def api_review_history_day(date: str):
-    """历史复盘报告读回（多日复盘用）：{date} 的全文 + 次日预案章节；无该日文件 → 404。"""
-    from daily_review.web.history import load_report
+    """历史报告读回（多日复盘用）：{date} 的全文 + 次日预案章节；支持 ?type=review|plan|open。
 
+    默认 type=review（复盘）；plan=隔夜预案；open=开盘策略。无对应文件 → 404。
+    """
+    from daily_review.web.history import load_artifact
+
+    artifact_type = str(request.args.get("type", "review")).strip()
+    if artifact_type not in ("review", "plan", "open"):
+        return jsonify({"error": f"type 需为 review/plan/open，收到：{artifact_type}"}), 400
     try:
-        report = load_report(date)
+        report = load_artifact(date, artifact_type)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     if report is None:
-        return jsonify({"error": f"未找到 {date} 的复盘报告（先运行 review 生成）"}), 404
+        label = {"review": "复盘报告", "plan": "隔夜预案", "open": "开盘策略"}.get(artifact_type, "产物")
+        return jsonify({"error": f"未找到 {date} 的{label}（先运行 review/plan/open 生成）"}), 404
     return jsonify(report)
 
 

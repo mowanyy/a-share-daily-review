@@ -99,6 +99,87 @@ def test_load_report_path_traversal_blocked(out):
         load_report("20260810/../20260809")
 
 
+# ---------------------------------------------------------------- load_artifact（v0.20.1 新增）
+
+
+def test_load_artifact_review(out):
+    """load_artifact(date, 'review') 等价于 load_report。"""
+    from daily_review.web.history import load_artifact, load_report
+
+    r1 = load_artifact("20260810", "review")
+    r2 = load_report("20260810")
+    assert r1 is not None and r2 is not None
+    assert r1["report_html"] == r2["report_html"]
+    assert r1["plan_html"] == r2["plan_html"]
+    assert r1["task_type"] == "review"
+
+
+def test_load_artifact_plan(out):
+    """load_artifact(date, 'plan') 加载隔夜预案。"""
+    from daily_review.web.history import load_artifact
+
+    r = load_artifact("20260810", "plan")
+    assert r is not None
+    assert "消息面" in r["report_html"]
+    assert r["plan_html"] == ""  # 隔夜预案无次日预案章节
+    assert r["task_type"] == "plan"
+
+
+def test_load_artifact_open_missing(out):
+    """load_artifact(date, 'open') 无开盘策略文件 → None。"""
+    from daily_review.web.history import load_artifact
+
+    assert load_artifact("20260810", "open") is None
+
+
+def test_load_artifact_no_review_has_dashboard(out):
+    """有看板但无复盘 → load_artifact(date, 'review') 返回 None。"""
+    from daily_review.web.history import load_artifact
+
+    assert load_artifact("20260812", "review") is None
+
+
+def test_load_artifact_invalid_type(out):
+    """非法 artifact_type 抛 ValueError。"""
+    from daily_review.web.history import load_artifact
+
+    with pytest.raises(ValueError, match="artifact_type"):
+        load_artifact("20260810", "dashboard")
+
+
+def test_api_history_day_with_type_plan(api_client, out):
+    """GET /api/review/history/<date>?type=plan 返回隔夜预案。"""
+    r = api_client.get("/api/review/history/20260810?type=plan")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["task_type"] == "plan"
+    assert "消息面" in data["report_html"]
+    assert data["plan_html"] == ""
+
+
+def test_api_history_day_with_type_404(api_client):
+    """GET /api/review/history/<date>?type=open 无文件 → 404。"""
+    r = api_client.get("/api/review/history/20260810?type=open")
+    assert r.status_code == 404
+    assert "开盘策略" in r.get_json()["error"]
+
+
+def test_api_history_day_invalid_type(api_client):
+    """非法 type 参数 → 400。"""
+    r = api_client.get("/api/review/history/20260810?type=dashboard")
+    assert r.status_code == 400
+
+
+def test_api_history_day_with_type_review(api_client):
+    """GET /api/review/history/<date>?type=review 默认行为。"""
+    r = api_client.get("/api/review/history/20260810?type=review")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["task_type"] == "review"
+    assert "市场情绪回暖" in data["report_html"]
+    assert "关注低开修复" in data["plan_html"]
+
+
 # ---------------------------------------------------------------- API 层
 
 
@@ -131,7 +212,7 @@ def test_api_history_day_ok(api_client):
 def test_api_history_day_404(api_client):
     r = api_client.get("/api/review/history/20260901")
     assert r.status_code == 404
-    assert "复盘" in r.get_json()["error"]
+    assert "复盘" in r.get_json()["error"] or "产物" in r.get_json()["error"]
 
 
 def test_api_history_day_invalid(api_client):

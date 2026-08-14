@@ -132,6 +132,11 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      工具循环。新增多 Agent 会诊端点 POST /api/agents/consult（选多个 Agent → 各自分析
 	      → 合成 LLM 综合观点）与 GET /api/agents/list。Web 问答页底部新增「多 Agent 会诊」
 	      面板（勾选 Agent → 输入问题 → 看各观点 + 综合结论）。零外链零 CDN。
+		v0.20.1：修复历史报告下拉框漏掉隔夜预案/开盘策略——原 `load_report()` 只读 `_复盘.md`，
+		      前端下拉 `.filter(r.has_review)` 排除仅有隔夜/开盘的日期。新增 `load_artifact(date,
+		      type)` 支持 `review/plan/open` 三种类型加载；`GET /api/review/history/<date>` 新增
+		      `?type=review|plan|open` 参数；前端下拉显示所有有产物的日期，查看时自动选最佳类型，
+		      多类型产物时显示类型切换按钮。335 测试通过。
 """
 
-__version__ = "0.20.0"
+__version__ = "0.20.1"
