@@ -142,6 +142,15 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 		      两个调用点（llm/premarket.py）仍为 2000，推理模型（deepseek-v4-flash）思考先占
 		      预算导致正文为空。两个调用点 max_tokens 2000 → 4000，新增回归测试锁定
 		      （tests/test_premarket.py：max_tokens ≥ 4000 + LLM 失败兜底）。338 测试通过。
+	v0.20.3：推理模型思考占满预算 → 自动切兜底非推理模型（根治大输入场景）——
+	      v0.20.2 调大 max_tokens 到 4000 仍治标不治本：开盘策略含 68 只竞价股 +
+	      隔夜预案全文，推理模型思考量极大。根因：chat() 的「思考占满预算」错误在
+	      _post_fallback 返回之后才抛出（retryable=False），兜底机制根本不会触发。
+	      修复：chat() 检测到 reasoning_content 非空 + finish_reason=length + 正文为空时，
+	      直接用兜底后端（官方 deepseek-chat 非推理模型）重试一次；未配置兜底或兜底
+	      同主时落回原报错（retryable=True 供上层判断）。chat_tools 不受影响（空正文 +
+	      工具调用属正常）。新增测试 test_reasoning_budget_exhausted_falls_back
+	      （主 key 空正文 → 兜底 key 返回完整正文）。339 测试通过。
 """
 
-__version__ = "0.20.2"
+__version__ = "0.20.3"

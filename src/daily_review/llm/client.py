@@ -171,13 +171,30 @@ def chat(
         timeout=timeout,
     )
     content = choice["message"].get("content")
+    if not content and choice["message"].get("reasoning_content") and choice.get("finish_reason") == "length":
+        # v0.20.3：推理模型（SenseNova deepseek-v4-flash）把 max_tokens 全用在思考上，
+        # 正文字段为空 → 用兜底后端（官方 deepseek-chat，非推理模型）重试一次。
+        # 兜底与主后端相同 / 未配置兜底 → 不重试，落回下方报错提示。
+        fb_key = settings.llm_fallback_api_key
+        if fb_key and not (fb_key == api_key and settings.llm_fallback_base_url == base_url):
+            choice = _post(
+                messages,
+                api_key=fb_key,
+                model=settings.llm_fallback_model,
+                base_url=settings.llm_fallback_base_url,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+            content = choice["message"].get("content")
     if not content:
-        # 推理模型（如 SenseNova 托管的 deepseek-v4-flash）把 max_tokens 用在
-        # reasoning_content（思考）上时，正文字段会为空——给可行动的提示而非笼统报错。
+        # 推理模型把 max_tokens 用在 reasoning_content（思考）上时，正文字段会为空——
+        # 给可行动的提示而非笼统报错（retryable=True 供上层判断可切换后端）。
         if choice["message"].get("reasoning_content") and choice.get("finish_reason") == "length":
             raise LLMError(
                 "DeepSeek 返回为空：模型把 max_tokens 全部用于思考（reasoning_content），"
-                "正文字段为空；请调大 max_tokens 或改用非推理模型"
+                "正文字段为空；请调大 max_tokens 或改用非推理模型",
+                retryable=True,
             )
         raise LLMError(f"DeepSeek 返回为空: {str(choice)[:300]}")
     return content.strip()

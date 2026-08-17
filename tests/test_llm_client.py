@@ -63,6 +63,8 @@ class TestChatEmptyContent:
         msg = str(ei.value)
         assert "reasoning_content" in msg
         assert "max_tokens" in msg
+        # v0.20.3：思考占满预算 → 可重试，自动切兜底非推理模型
+        assert ei.value.retryable is True
 
 
 class TestFallbackProvider:
@@ -119,6 +121,26 @@ class TestFallbackProvider:
         with pytest.raises(LLMError):
             client.chat([{"role": "user", "content": "hi"}], **_PRIMARY)
         assert len(fake.calls) == 1
+
+    def test_reasoning_budget_exhausted_falls_back(self, monkeypatch):
+        """v0.20.3：推理模型思考占满 max_tokens → 自动切兜底非推理模型重试并返回正文。"""
+        self._set_fallback(monkeypatch)
+        calls = []
+
+        def fake(messages, *, api_key, model, base_url, temperature, max_tokens, timeout,
+                 tools=None, tool_choice=None):
+            calls.append({"api_key": api_key, "model": model})
+            if api_key == "sk-primary":
+                # 推理模型把预算全花在思考上 → 正文为空
+                return _make_choice(content="", reasoning_content="思考了很久", finish_reason="length")
+            # 兜底（非推理 deepseek-chat）正常返回
+            return _make_choice(content="兜底后生成的完整正文")
+
+        monkeypatch.setattr(client, "_post", fake)
+        out = client.chat([{"role": "user", "content": "hi"}], **_PRIMARY)
+        assert out == "兜底后生成的完整正文"
+        assert [c["api_key"] for c in calls] == ["sk-primary", "sk-fallback"]
+        assert calls[1]["model"] == "deepseek-chat"  # 兜底是非推理模型
 
     def test_chat_tools_fallback_retries_with_tools(self, monkeypatch):
         self._set_fallback(monkeypatch)
