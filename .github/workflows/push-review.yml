@@ -2,8 +2,8 @@ name: push-review-report
 
 on:
   schedule:
-    # 北京时间 17:30（UTC 09:30），周一~周五，盘后复盘推送
-    - cron: '30 9 * * 1-5'
+    # 北京时间 18:00（UTC 10:00），周一~周五，盘后复盘推送
+    - cron: '0 10 * * 1-5'
   workflow_dispatch: {}
 
 jobs:

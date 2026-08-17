@@ -4,11 +4,11 @@
 
 ## 项目一句话
 
-A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化分析（连板梯队 / 题材运行周期 / 炸板净流入 / 龙虎榜游资 / 情绪温度）→ LLM 生成 Markdown 复盘文档；**复盘三时段**：盘后复盘（17:00 后）→ 隔夜预案（9:00 前，消息面）→ 开盘策略（9:25-9:30，竞价筛选个股）；支持问答、个人战法驱动的次日预案、**多 Agent 通信**（QA ↔ 基金经理互相提问 + 多专家会诊）与**定时推送报告到飞书**（GitHub Actions 免费云端）。
+A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化分析（连板梯队 / 题材运行周期 / 炸板净流入 / 龙虎榜游资 / 情绪温度）→ LLM 生成 Markdown 复盘文档；**复盘三时段**：盘后复盘（18:00 后）→ 隔夜预案（9:00 前，消息面）→ 开盘策略（9:25-9:30，竞价筛选个股）；支持问答、个人战法驱动的次日预案、**多 Agent 通信**（QA ↔ 基金经理互相提问 + 多专家会诊）与**定时推送报告到飞书**（GitHub Actions 免费云端）。
 
 ## 当前阶段（重要）
 
-`v0.21.0`：**定时推送报告到飞书（GitHub Actions 免费云端）**——新增 `notify.py`（飞书群机器人 webhook 推送，支持加签 HMAC-SHA256）与 `push.py`（生成报告 → 提取标题+摘要 → 推送；摘要确定性提取不调 LLM，周末/休市自动跳过）。`config.py` 新增 `FEISHU_WEBHOOK_URL`/`FEISHU_SECRET`；CLI 新增 `push` 子命令（`push --type review|plan|open [--date]`）。新增 3 个 GitHub Actions workflow（`push-review.yml`/`push-plan.yml`/`push-open.yml`）定时：盘后复盘 17:30、盘前隔夜预案 08:30、竞价后开盘策略 09:25（北京时间，cron 转 UTC、`1-5` 避开周末）；LLM 非机密配置写死在 workflow，密钥走 GitHub Secrets（`DEEPSEEK_API_KEY`/`DEEPSEEK_FALLBACK_API_KEY`/`FEISHU_WEBHOOK_URL`）。配套 `docs/飞书推送说明.md`。**360 测试通过**。
+`v0.21.0`：**定时推送报告到飞书（GitHub Actions 免费云端）**——新增 `notify.py`（飞书群机器人 webhook 推送，支持加签 HMAC-SHA256）与 `push.py`（生成报告 → 提取标题+摘要 → 推送；摘要确定性提取不调 LLM，周末/休市自动跳过）。`config.py` 新增 `FEISHU_WEBHOOK_URL`/`FEISHU_SECRET`；CLI 新增 `push` 子命令（`push --type review|plan|open [--date]`）。新增 3 个 GitHub Actions workflow（`push-review.yml`/`push-plan.yml`/`push-open.yml`）定时：盘后复盘 18:00、盘前隔夜预案 08:30、竞价后开盘策略 09:25（北京时间，cron 转 UTC、`1-5` 避开周末）；LLM 非机密配置写死在 workflow，密钥走 GitHub Secrets（`DEEPSEEK_API_KEY`/`DEEPSEEK_FALLBACK_API_KEY`/`FEISHU_WEBHOOK_URL`）。配套 `docs/飞书推送说明.md`。**360 测试通过**。
 
 `v0.20.0`：**多 Agent 通信框架（互相提问 + 多专家会诊）**——新增 `web/agent_registry.py`：Agent 统一注册中心（`register()`/`list_agents()`/`call_agent()`），模块导入时自动注册 6+ 个 Agent（`qa_general` 知识问答 / `fund_张坤`·`fund_刘格菘`·`fund_丘栋荣`·`fund_葛兰` 基金经理 / `hotspot_brief` 热点简报）。**① QA → 基金经理**：QA 的 function-calling 工具新增 `query_agent`（`kb/tools.py`，可指定 agent_id 调用其他 Agent，schema 契约同步 `tool.datatools` v0.3.0 13 个工具）；**② 基金经理 → QA**：`fund_agent.analyze` 由 `chat()` 改为 `chat_tools()`，新增 `query_qa` 工具（可向 QA Agent 查市场概况），支持最多 3 轮工具循环，session/中军/历史裁剪逻辑不变；**③ 多 Agent 会诊**：Web 新增 `GET /api/agents/list` 与 `POST /api/agents/consult`（选多个 Agent → 顺序调用各自分析 → 合成 LLM `_synthesize_consult` 综合观点，合成失败降级拼接原始观点），问答页底部新增「多 Agent 会诊」面板（勾选 Agent → 输入问题 → 看各观点 + 综合结论）。零外链零 CDN。**326 测试通过**。
 

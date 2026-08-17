@@ -13,7 +13,7 @@
 - **AI 生成报告**：DeepSeek 大模型生成七章 Markdown 复盘 + 隔夜预案 + 开盘策略
 - **交互问答**：RAG 知识库 + 数据工具 function-calling，可问"今天炸板率多少""什么是空间板"
 - **Web 工作台**：浏览器里管理战法、跑复盘、看数据看板、问答
-- **定时推送**：电脑关机也能用 GitHub Actions 在 17:30 / 08:30 / 09:25 自动推送报告摘要到飞书
+- **定时推送**：电脑关机也能用 GitHub Actions 在 18:00 / 08:30 / 09:25 自动推送报告摘要到飞书
 
 > 💡 想了解完整需求、数据结构、接口清单等设计细节，请到 [docs/](docs/) 目录查看对应文档。
 
@@ -108,7 +108,7 @@ python -m daily_review realtime --codes 600601,002398,600789
 ### 2️⃣ 跑复盘三时段
 
 ```bash
-# 盘后复盘（17:00 后跑，生成 output/{日期}_复盘.md 七章报告）
+# 盘后复盘（18:00 后跑，生成 output/{日期}_复盘.md 七章报告）
 python -m daily_review review --date 20260806
 python -m daily_review review --date 20260806 --no-llm     # 只跑数据+指标，不调 LLM
 python -m daily_review review                                # 缺省自动探测最近交易日
