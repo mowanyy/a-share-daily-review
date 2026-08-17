@@ -66,6 +66,11 @@ class Settings:
     llm_fallback_base_url: str = field(default_factory=lambda: os.getenv("LLM_FALLBACK_BASE_URL", "https://api.deepseek.com"))
     llm_fallback_model: str = field(default_factory=lambda: os.getenv("LLM_FALLBACK_MODEL", "deepseek-chat"))
 
+    # 飞书群机器人推送（v0.21）：定时报告推送到飞书自定义机器人 webhook。
+    # FEISHU_WEBHOOK_URL 必填；FEISHU_SECRET 可选（机器人设了「加签」时填）。
+    feishu_webhook_url: str = field(default_factory=lambda: os.getenv("FEISHU_WEBHOOK_URL", ""))
+    feishu_secret: str = field(default_factory=lambda: os.getenv("FEISHU_SECRET", ""))
+
 
 def get_settings() -> Settings:
     """返回单例配置。"""

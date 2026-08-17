@@ -308,6 +308,26 @@ def _cmd_open(args) -> None:
     return 0
 
 
+def _cmd_push(args) -> None:
+    """生成报告并推送飞书群机器人（v0.21，供 GitHub Actions 定时 / 本地手动调用）。"""
+    from daily_review.push import REPORT_TYPE_LABEL, push_report
+
+    date = args.date or None
+    if not date:
+        print(f"[push] 缺省交易日: {args.type}（北京时间自动探测）")
+
+    result = push_report(args.type, date)
+    label = REPORT_TYPE_LABEL[args.type]
+    if result["status"] == "sent":
+        print(f"[push] ✅ {result['message']}")
+        return 0
+    if result["status"] == "skipped":
+        print(f"[push] ⏭ {result['message']}")
+        return 0
+    print(f"[push] ❌ {result['message']}")
+    return 1
+
+
 def _cmd_update_data(args) -> None:
     """手动一键更新数据：刷新静态缓存 + 重采近 N 天数据。"""
     from daily_review.data import eastmoney_pool as em
@@ -549,6 +569,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_open.add_argument("--date", default="", help="今日交易日 YYYYMMDD，缺省探测最近交易日")
     p_open.set_defaults(func=_cmd_open)
+
+    p_push = sub.add_parser(
+        "push",
+        help="生成报告并推送飞书群机器人（定时推送，GitHub Actions 用；也可本地手动测试）",
+    )
+    p_push.add_argument(
+        "--type", required=True, choices=["review", "plan", "open"],
+        help="报告类型：review=复盘 / plan=隔夜预案 / open=开盘策略",
+    )
+    p_push.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省按北京时间自动探测")
+    p_push.set_defaults(func=_cmd_push)
 
     p_update = sub.add_parser(
         "update-data",

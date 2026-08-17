@@ -151,6 +151,14 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      同主时落回原报错（retryable=True 供上层判断）。chat_tools 不受影响（空正文 +
 	      工具调用属正常）。新增测试 test_reasoning_budget_exhausted_falls_back
 	      （主 key 空正文 → 兜底 key 返回完整正文）。339 测试通过。
+	v0.21：定时推送报告到飞书（GitHub Actions 免费云端）——新增 notify.py（飞书群机器人
+	      webhook 推送，支持加签 HMAC-SHA256）、push.py（生成报告→提取标题+摘要→推送，
+	      摘要确定性提取不调 LLM，周末/休市自动跳过）；config 新增 FEISHU_WEBHOOK_URL/
+	      FEISHU_SECRET；CLI 新增 push 子命令（push --type review|plan|open）。新增 3 个
+	      GitHub Actions workflow 定时触发：盘后复盘 17:30 / 盘前隔夜预案 08:30 / 竞价后
+	      开盘策略 09:25（北京时间，cron 转 UTC，1-5 避开周末），LLM 非机密配置写死 +
+	      密钥走 GitHub Secrets（DEEPSEEK_API_KEY / DEEPSEEK_FALLBACK_API_KEY /
+	      FEISHU_WEBHOOK_URL）。配套 docs/飞书推送说明.md。360 测试通过。
 """
 
-__version__ = "0.20.3"
+__version__ = "0.21.0"
