@@ -162,6 +162,8 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	v0.21.1：修复云端推送漏掉飞书签名——机器人设了「签名校验」时，GitHub Actions
 	      workflow 只注入了 FEISHU_WEBHOOK_URL、漏了 FEISHU_SECRET，云端跑时不带签名
 	      会被飞书拒绝。3 个 workflow 补 FEISHU_SECRET 环境变量，docs 说明补第 4 个 Secret。
+	v0.21.2：推送摘要内容扩丰富——复盘报告由只推「一、总览」改为推 4 个核心章节
+	      （总览 + 情绪温度 + 连板梯队 + 次日预案）；隔夜预案/开盘策略正文 15 行 → 30 行。
 """
 
-__version__ = "0.21.1"
+__version__ = "0.21.2"

@@ -13,10 +13,14 @@ _REVIEW_MD = """# 📊 2026-08-17 复盘（周一）
 
 ## 一、总览
 市场情绪回暖，涨停 50 家。
-
 空间板高度 5 板，炸板率 18%。
+
 ## 二、情绪温度
-...
+情绪温度 66 分，修复期。
+
+## 三、连板梯队
+连板 14 家，最高 4 板。
+
 ## 七、次日预案
 关注低开修复的个股。
 """
@@ -46,8 +50,11 @@ class TestSummarize:
         assert "2026-08-17 复盘（周一）" in text
         assert "一、总览" in text
         assert "涨停 50 家" in text
-        # 不包含预案章节（只取总览）
-        assert "次日预案" not in text
+        # v0.21.2：推 4 个核心章节，含次日预案（操作建议）
+        assert "二、情绪温度" in text
+        assert "三、连板梯队" in text
+        assert "七、次日预案" in text
+        assert "关注低开修复" in text
 
     def test_plan_extracts_body(self):
         text = summarize(_PLAN_MD, "plan")

@@ -84,7 +84,7 @@ def _extract_section(md_text: str, section_title: str, max_lines: int = 15) -> s
 
 
 def summarize(md_text: str, report_type: str) -> str:
-    """提取「标题 + 摘要」纯文本（约 500-800 字，飞书 text 单条上限内）。"""
+    """提取「标题 + 摘要」纯文本（约 1500-2000 字，飞书 text 单条上限内）。"""
     label = REPORT_TYPE_LABEL.get(report_type, "报告")
     lines = md_text.splitlines()
     # 标题：第一行 # 📊 YYYY-MM-DD 复盘/隔夜预案/开盘策略（周X）
@@ -97,12 +97,24 @@ def summarize(md_text: str, report_type: str) -> str:
     head = f"【每日复盘】{label} · {title}"
 
     if report_type == "review":
-        body = _extract_section(md_text, "一、总览", max_lines=15)
-        if body:
-            return f"{head}\n\n【一、总览】\n{body}"
-    # plan / open：正文即核心内容（消息面汇总 / 竞价总览），取标题后的前 15 行
+        # 推 4 个核心章节：总览（情绪定调）+ 情绪温度 + 连板梯队 + 次日预案（明天怎么做）
+        sections = [
+            ("一、总览", 20),
+            ("二、情绪温度", 10),
+            ("三、连板梯队", 12),
+            ("七、次日预案", 20),
+        ]
+        parts: list[str] = []
+        for sec_title, max_lines in sections:
+            body = _extract_section(md_text, sec_title, max_lines=max_lines)
+            if body:
+                parts.append(f"【{sec_title}】\n{body}")
+        if parts:
+            return f"{head}\n\n" + "\n\n".join(parts)
+
+    # plan / open：正文即核心内容（消息面汇总+关注方向 / 竞价总览+个股清单），取 30 行
     content = [ln for ln in lines[1:] if _clean_md(ln)]
-    body = "\n".join(_clean_md(ln) for ln in content[:15])
+    body = "\n".join(_clean_md(ln) for ln in content[:30])
     return f"{head}\n\n{body}" if body else head
 
 
