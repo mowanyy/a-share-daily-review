@@ -560,9 +560,9 @@ def api_qa_ask():
 
 # ---------------------------------------------------------------- 数据看板 API
 
-_CLOSE_TIME = datetime.strptime("17:30", "%H:%M").time()
-# 盘中缓存 TTL：当日数据实时变动（涨跌停 15:00 收盘，龙虎榜 17:30 盘后完整），缓存 10 分钟；
-# 历史日期/收盘后（17:30 龙虎榜齐）定稿，进程内不失效
+_CLOSE_TIME = datetime.strptime("18:00", "%H:%M").time()
+# 盘中缓存 TTL：当日数据实时变动（涨跌停 15:00 收盘，龙虎榜盘后完整），缓存 10 分钟；
+# 历史日期/收盘后（18:00 龙虎榜齐）定稿，进程内不失效
 _INTRADAY_TTL_SECONDS = 600
 
 
@@ -571,17 +571,17 @@ def _clock() -> datetime:
 
 
 def _dashboard_cache_is_fresh(trade_date: str, stored_ts: float) -> bool:
-    """看板缓存/文件是否仍有效：历史日期定稿；今日盘中 10 分钟 TTL；今日 17:30 后须 17:30 之后生成。
+    """看板缓存/文件是否仍有效：历史日期定稿；今日盘中 10 分钟 TTL；今日 18:00 后须 18:00 之后生成。
 
-    定稿边界取 17:30 而非 15:00：看板含龙虎榜章节，榜单盘后 17:30 才完整，
-    15:00–17:30 之间生成的快照龙虎榜为空，不能当最终版缓存。
+    定稿边界取 18:00 而非 15:00：看板含龙虎榜章节，榜单盘后 18:00 才完整，
+    15:00–18:00 之间生成的快照龙虎榜为空，不能当最终版缓存。
     """
     now = _clock()
     if trade_date != now.strftime("%Y%m%d"):
         return True  # 历史日期数据已定稿
     if now.time() >= _CLOSE_TIME:
-        close_ts = datetime.strptime(now.strftime("%Y%m%d") + "173000", "%Y%m%d%H%M%S").timestamp()
-        return stored_ts >= close_ts  # 收盘后：17:30 前生成的盘中快照视为过期
+        close_ts = datetime.strptime(now.strftime("%Y%m%d") + "180000", "%Y%m%d%H%M%S").timestamp()
+        return stored_ts >= close_ts  # 收盘后：18:00 前生成的盘中快照视为过期
     return (now.timestamp() - stored_ts) <= _INTRADAY_TTL_SECONDS  # 盘中：10 分钟
 
 

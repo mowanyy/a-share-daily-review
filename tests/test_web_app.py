@@ -318,7 +318,7 @@ def test_config_llm_endpoint(app, monkeypatch):
 
 
 def test_dashboard_cache_freshness_rules(monkeypatch):
-    """缓存/文件有效期：历史日期定稿；今日盘中 10 分钟；今日 17:30（龙虎榜齐）后须 17:30 后生成。"""
+    """缓存/文件有效期：历史日期定稿；今日盘中 10 分钟；今日 18:00（龙虎榜齐）后须 18:00 后生成。"""
     import datetime
 
     import daily_review.web.routes as routes_mod
@@ -330,18 +330,18 @@ def test_dashboard_cache_freshness_rules(monkeypatch):
     # 今日盘中：10 分钟内有效
     assert routes_mod._dashboard_cache_is_fresh("20260811", intraday.timestamp() - 100) is True
     assert routes_mod._dashboard_cache_is_fresh("20260811", intraday.timestamp() - 700) is False
-    # 定稿边界 17:30：17:30 前仍是盘中 TTL（15:01 生成、15:30 看已超 10 分钟 → 过期）
+    # 定稿边界 18:00：18:00 前仍是盘中 TTL（15:01 生成、15:30 看已超 10 分钟 → 过期）
     mid = datetime.datetime(2026, 8, 11, 15, 30)
     monkeypatch.setattr(routes_mod, "_clock", lambda: mid)
     assert routes_mod._dashboard_cache_is_fresh("20260811",
                                                 datetime.datetime(2026, 8, 11, 15, 1).timestamp()) is False
-    # 17:30 后：17:30 前生成的盘中快照过期（龙虎榜空），17:30 后生成的有效
-    after = datetime.datetime(2026, 8, 11, 18, 0)
+    # 18:00 后：18:00 前生成的盘中快照过期（龙虎榜空），18:00 后生成的有效
+    after = datetime.datetime(2026, 8, 11, 18, 30)
     monkeypatch.setattr(routes_mod, "_clock", lambda: after)
     assert routes_mod._dashboard_cache_is_fresh("20260811",
                                                 datetime.datetime(2026, 8, 11, 16, 0).timestamp()) is False
     assert routes_mod._dashboard_cache_is_fresh("20260811",
-                                                datetime.datetime(2026, 8, 11, 17, 31).timestamp()) is True
+                                                datetime.datetime(2026, 8, 11, 18, 1).timestamp()) is True
 
 
 def test_dashboard_cache_evicts_oldest(monkeypatch):

@@ -50,7 +50,7 @@ v0.12.1：LLM 后端切换商汤 SenseNova（主）+ 官方 DeepSeek 自动兜�
 	      retryable 标记（429/5xx/网络=可重试），chat/chat_tools 经 _post_fallback 在可重试
 	      失败时自动用兜底后端（DEEPSEEK_FALLBACK_API_KEY / LLM_FALLBACK_BASE_URL /
 	      LLM_FALLBACK_MODEL，官方 DeepSeek）重试一次。
-	v0.13：复盘三时段拆分——盘后复盘（17:00后，现有）+ 隔夜预案（9:00前，消息面）
+	v0.13：复盘三时段拆分——盘后复盘（18:00后，现有）+ 隔夜预案（9:00前，消息面）
 	      + 开盘策略（9:25-9:30，竞价个股筛选）。新增东财7x24快讯采集（eastmoney_news）、
 	      竞价指标计算（auction）、隔夜预案+开盘策略 LLM 生成（premarket）；CLI 新增
 	      plan/open 子命令，Web 新增对应按钮与 API；两个新 prompt：module.overnight、

@@ -250,7 +250,7 @@ def collect(trade_date: str, n_days: int = TIMELINE_DAYS) -> dict:
             save_csv(moneyflow, "moneyflow_zb", trade_date)
     print(f"  资金流 {len(moneyflow)} 条")
 
-    # 6. 龙虎榜（盘后约 17:30 更新；盘中/未更新日为空表，优雅降级不报错）
+    # 6. 龙虎榜（盘后约 18:00 更新；盘中/未更新日为空表，优雅降级不报错）
     try:
         lhb_daily = _cached("lhb_daily", trade_date, lambda: eastmoney_lhb.fetch_lhb_daily(trade_date))
     except Exception:

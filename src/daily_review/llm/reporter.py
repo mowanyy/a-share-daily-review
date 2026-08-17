@@ -252,7 +252,7 @@ def _lhb_fallback(ind: dict) -> str:
     lhb = ind.get("lhb") or {}
     ov = lhb.get("overview") or {}
     if not ov.get("stock_count"):
-        return "（当日龙虎榜未更新或数据为空——复盘时间需在盘后 17:30 之后）"
+        return "（当日龙虎榜未更新或数据为空——复盘时间需在盘后 18:00 之后）"
     head = (
         f"上榜 {ov.get('stock_count', 0)} 家 / 净买额 {_fmt_money(ov.get('total_net_amt'))} / "
         f"机构上榜 {ov.get('inst_stock_count', 0)} 家"

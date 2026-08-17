@@ -116,7 +116,7 @@ def _print_summary(ind: dict) -> None:
                 f"净买{_fmt_amount(h.get('net_amt'))} 标的: {tops}"
             )
     else:
-        print("龙虎榜 未更新或为空（需盘后 17:30 之后）")
+        print("龙虎榜 未更新或为空（需盘后 18:00 之后）")
 
 
 def _probe_recent_date() -> str:
@@ -545,7 +545,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_rev = sub.add_parser(
         "review",
-        help="端到端复盘：采集→指标→LLM 报告（涨停数据收盘 15:00 后、龙虎榜 17:30 后完整）",
+        help="端到端复盘：采集→指标→LLM 报告（涨停数据收盘 15:00 后、龙虎榜 18:00 后完整）",
     )
     p_rev.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
     p_rev.add_argument(

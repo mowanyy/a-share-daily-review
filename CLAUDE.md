@@ -26,7 +26,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 `v0.14.0`：**看板数据本地化加速 + 概念池 Agent 管理**——补上 3 块静态缓存到 `data/cache/`（行业映射 `industry_map.csv` 7天TTL / 概念成分 `board_constituents/{code}.csv` 3天TTL / 交易日历 `trade_dates.csv`），省约 72s/次网络开销；新增 `data/local_cache.py`；pipeline 行业映射/概念成分、eastmoney_pool 交易日历均走缓存。新增 `update-data` CLI 命令（`python -m daily_review update-data [--days N] [--date] [--force]`，刷新缓存+重采近N天）与 Web「更新数据」按钮。新增**概念池 CRUD** 服务 `web/concept_pool.py`（落盘 `data/stock_pool/concepts/{概念名}.csv`，gitignored），Agent 通过 6 个 function-calling 工具（`concept_pool_create/delete/add_stocks/remove_stocks/list/query`）对短线题材股票池增删改查，自动同步到 `knowledge/概念池/*.md` 供 RAG 检索；Web 新增 `/concepts` 管理页。新增 `tools/stock_pool.py` 供选股数据按日期切分（`split-pool` 命令 → 218 个 `data/stock_pool/{日期}.csv`）。工具 schema 更新至 12 个。257 测试通过。
 
-`v0.13.0`：**复盘三时段拆分**——盘后复盘（17:00 后，现有七章报告）+ **隔夜预案（9:00 前，纯消息面分析）** + **开盘策略（9:25-9:30，竞价后聚焦有机会的个股）**。新增东财 7x24 快讯采集（`data/eastmoney_news.py`，接口 `newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_{N}_{P}_.html`，响应键 `LivesList`、字段 `showtime`/`digest`/`simtype_zh`，URL 尾部需下划线）、竞价指标计算（`analysis/auction.py`，复用新浪实时行情取竞价价/量，高开幅度/竞价量能/昨日封单）、隔夜预案+开盘策略 LLM 生成（`llm/premarket.py`，两个新 prompt：`module.overnight` / `module.open_strategy`）。CLI 新增 `plan`/`open` 子命令（`python -m daily_review plan|open`），Web `/review` 页新增「隔夜预案」「开盘策略」按钮（`/api/plan/start`、`/api/open/start`）。隔夜消息多页翻取直到覆盖隔夜窗口（昨日 17:00 → 今早 9:00）。257 测试通过。
+`v0.13.0`：**复盘三时段拆分**——盘后复盘（18:00 后，现有七章报告）+ **隔夜预案（9:00 前，纯消息面分析）** + **开盘策略（9:25-9:30，竞价后聚焦有机会的个股）**。新增东财 7x24 快讯采集（`data/eastmoney_news.py`，接口 `newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_{N}_{P}_.html`，响应键 `LivesList`、字段 `showtime`/`digest`/`simtype_zh`，URL 尾部需下划线）、竞价指标计算（`analysis/auction.py`，复用新浪实时行情取竞价价/量，高开幅度/竞价量能/昨日封单）、隔夜预案+开盘策略 LLM 生成（`llm/premarket.py`，两个新 prompt：`module.overnight` / `module.open_strategy`）。CLI 新增 `plan`/`open` 子命令（`python -m daily_review plan|open`），Web `/review` 页新增「隔夜预案」「开盘策略」按钮（`/api/plan/start`、`/api/open/start`）。隔夜消息多页翻取直到覆盖隔夜窗口（昨日 18:00 → 今早 9:00）。257 测试通过。
 
 `v0.12.1`：**LLM 后端=商汤 SenseNova（主，DeepSeek V4 Flash 推理模型）+ 官方 DeepSeek 自动兜底**——新 API key 属商汤 Token Plan 平台，实测 `token.sensenova.cn` 为有效接口（`api.sensenova.cn` 404 路由不存在）。`.env` 主三件套：`DEEPSEEK_API_KEY`（新）/ `LLM_BASE_URL=https://token.sensenova.cn/v1` / `LLM_MODEL=deepseek-v4-flash`（仅此模型名可用，`deepseek-v4` 报 model not found）；**兜底三件套**：`DEEPSEEK_FALLBACK_API_KEY`（官方旧 key）/ `LLM_FALLBACK_BASE_URL=https://api.deepseek.com` / `LLM_FALLBACK_MODEL=deepseek-chat`。该模型是**推理模型**（回包带 `reasoning_content`，思考先占 token）且 **Token Plan 免费额度有调用频率上限（实测 429）** → 四个小预算调用点 `max_tokens` 由 500/600/500/1500 上调至 1500/1200/1200/2500 给思考留预算（热点/总览/看板/预案）；`chat()` 空 content 报错区分「推理模型思考占满预算」（提示调大 max_tokens / 换非推理模型），不再笼统「返回为空」；function-calling 守卫仅拦含 `reasoner` 的模型，`deepseek-v4-flash` 不误拦，QA 工具回放已含 `reasoning_content`。**自动兜底**：`LLMError` 增 `retryable` 标记（429/5xx/网络错误=可重试），`chat`/`chat_tools` 经 `_post_fallback` 在可重试失败时自动用兜底后端重试一次（无兜底 key 或兜底同主则原样抛出；兜底再失败如实上报）。换平台只改 `.env` 六键，不动代码。
 
@@ -46,7 +46,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 ```bash
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review kline --code 600000 --lmt 30
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review realtime --codes 600601,002398,600789
-# 端到端复盘：采集→指标→LLM 报告（涨停数据 15:00 后、龙虎榜 17:30 后完整、情绪温度需近5日时序；--no-llm 跳过 LLM）
+# 端到端复盘：采集→指标→LLM 报告（涨停数据 15:00 后、龙虎榜 18:00 后完整、情绪温度需近5日时序；--no-llm 跳过 LLM）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806 --no-llm
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review            # 缺省探测最近交易日
@@ -150,7 +150,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 ## 边界（不做 / 尚未做）
 
 - 数据源定为**东方财富接口爬取**（非 akshare / tushare）。v0.3 已实现涨跌停池/资金流/概念板块（`data/eastmoney_pool.py`），v0.4 已实现龙虎榜/买卖席位（`data/eastmoney_lhb.py`）；**连板池（LB）、分时数据待实现**，详见 `docs/东财接口清单.md` 的状态列
-- 龙虎榜盘后更新：`review` 在**下午 17:30 之后**跑才包含当日龙虎榜章节；盘中/未更新日该章节自动降级为「未更新」说明
+- 龙虎榜盘后更新：`review` 在**下午 18:00 之后**跑才包含当日龙虎榜章节；盘中/未更新日该章节自动降级为「未更新」说明
 - 运行环境固定为 `E:/conda_envs/envs/mowan_dm`；安装依赖只进该环境或本项目文件夹
 - LLM 角色：**自动报告已实现**（DeepSeek，`llm/`）、**数据看板多日解读已实现**（`dashboard.py`，可 `--no-llm` 降级）、**交互问答已实现**（`kb/`，RAG 知识库 + 6 个数据工具 function-calling；向量路径可选，未装自动降级纯关键词）、**Web 工作台已实现**（`web/`，Flask，默认仅本机 `127.0.0.1:5000`，无认证勿暴露 LAN）
 - 首期模块：情绪温度、连板梯队、题材运行周期与归类、炸板净流入、龙虎榜游资（已实现）

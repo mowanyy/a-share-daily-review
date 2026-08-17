@@ -647,7 +647,7 @@ function renderBreak() {
 function renderLhb() {
   const l = DATA.lhb, el = document.getElementById("lhb");
   const ov = l.overview || {};
-  if (!ov.stock_count) { el.innerHTML = '<div class="empty">（当日龙虎榜未更新——需盘后 17:30 之后）</div>'; return; }
+  if (!ov.stock_count) { el.innerHTML = '<div class="empty">（当日龙虎榜未更新——需盘后 18:00 之后）</div>'; return; }
   const kpis = ["上榜 " + ov.stock_count + " 家", "净买额 " + fmtMoney(ov.total_net_amt),
     "机构上榜 " + (ov.inst_stock_count || 0) + " 家"]
     .map(t => "<span class='chip'>" + esc(t) + "</span>").join(" ");

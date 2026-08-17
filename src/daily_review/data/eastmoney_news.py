@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from daily_review.data.http_client import DEFAULT_HEADERS, get_text
 
 _KUAIBASE = "https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_{pageSize}_{page}_.html"
-_OVERNIGHT_START_HOUR = 17  # 昨日 17:00
+_OVERNIGHT_START_HOUR = 18  # 昨日 18:00
 _OVERNIGHT_END_HOUR = 9     # 今早 9:00
 
 # 东财接口专用头（对齐 eastmoney_pool.EM_HEADERS，覆盖 http_client 默认的 sina Referer）
@@ -60,7 +60,7 @@ def fetch_kuaixun(page_size: int = 50, page: int = 1) -> list[dict]:
 
 
 def filter_overnight(items: list[dict], trade_date: str) -> list[dict]:
-    """过滤隔夜消息：昨日 17:00 到今早 9:00 之间发布的。
+    """过滤隔夜消息：昨日 18:00 到今早 9:00 之间发布的。
 
     trade_date: 今天日期 YYYYMMDD（用于推算「昨日」）。
     """
@@ -89,7 +89,7 @@ def filter_overnight(items: list[dict], trade_date: str) -> list[dict]:
 def fetch_overnight_news(trade_date: str, page_size: int = 50, max_pages: int = 3) -> list[dict]:
     """一站式获取隔夜消息（多页拉取直到覆盖隔夜窗口，返回去重后的隔夜消息）。
 
-    分页策略：从第 1 页起逐页拉取，若该页最早一条已早于窗口起点（昨日 17:00），
+    分页策略：从第 1 页起逐页拉取，若该页最早一条已早于窗口起点（昨日 18:00），
     说明后续页更旧、无需再拉；否则继续下一页，最多 max_pages 页。
     """
     today = datetime.strptime(trade_date, "%Y%m%d")

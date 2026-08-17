@@ -116,7 +116,7 @@ def _overnight_user(indicators: dict, news_list: list[dict], trade_date: str) ->
     return (
         f"今日日期：{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}（{_weekday_cn(trade_date)}）\n"
         f"昨日复盘核心数据（JSON）：\n```json\n{_compact_json(_overnight_digest(indicators))}\n```\n\n"
-        f"隔夜消息（东财7x24快讯，昨日17:00至今早9:00，共{len(news_list)}条）：\n"
+        f"隔夜消息（东财7x24快讯，昨日18:00至今早9:00，共{len(news_list)}条）：\n"
         f"```json\n{news_text}\n```\n\n"
         "请输出「隔夜预案」：消息面汇总 → 消息-题材联动分析 → 今日关注方向。"
         "只输出正文，不要标题、不要编造数字。"
