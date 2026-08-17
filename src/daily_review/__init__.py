@@ -159,6 +159,9 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      开盘策略 09:25（北京时间，cron 转 UTC，1-5 避开周末），LLM 非机密配置写死 +
 	      密钥走 GitHub Secrets（DEEPSEEK_API_KEY / DEEPSEEK_FALLBACK_API_KEY /
 	      FEISHU_WEBHOOK_URL）。配套 docs/飞书推送说明.md。360 测试通过。
+	v0.21.1：修复云端推送漏掉飞书签名——机器人设了「签名校验」时，GitHub Actions
+	      workflow 只注入了 FEISHU_WEBHOOK_URL、漏了 FEISHU_SECRET，云端跑时不带签名
+	      会被飞书拒绝。3 个 workflow 补 FEISHU_SECRET 环境变量，docs 说明补第 4 个 Secret。
 """
 
-__version__ = "0.21.0"
+__version__ = "0.21.1"

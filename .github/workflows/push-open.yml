@@ -28,4 +28,5 @@ jobs:
           LLM_FALLBACK_BASE_URL: https://api.deepseek.com
           LLM_FALLBACK_MODEL: deepseek-chat
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
         run: PYTHONPATH=src python -m daily_review push --type open
