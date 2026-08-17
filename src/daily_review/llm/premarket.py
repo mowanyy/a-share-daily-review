@@ -166,7 +166,7 @@ def generate_overnight_plan(
         {"role": "user", "content": _overnight_user(indicators, news_list, trade_date)},
     ]
     try:
-        body = chat(messages, api_key=api_key, max_tokens=2000)
+        body = chat(messages, api_key=api_key, max_tokens=4000)  # 推理模型预留 reasoning 预算
     except LLMError as exc:
         body = f"（隔夜预案 LLM 生成失败：{exc}）\n\n{_overnight_fallback(news_list)}"
 
@@ -273,7 +273,7 @@ def generate_open_strategy(
         {"role": "user", "content": _open_strategy_user(indicators, auction_data, plan_text, trade_date)},
     ]
     try:
-        body = chat(messages, api_key=api_key, max_tokens=2000)
+        body = chat(messages, api_key=api_key, max_tokens=4000)  # 推理模型预留 reasoning 预算
     except LLMError as exc:
         body = f"（开盘策略 LLM 生成失败：{exc}）\n\n{_open_strategy_fallback(auction_data)}"
 

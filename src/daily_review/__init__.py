@@ -137,6 +137,11 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 		      type)` 支持 `review/plan/open` 三种类型加载；`GET /api/review/history/<date>` 新增
 		      `?type=review|plan|open` 参数；前端下拉显示所有有产物的日期，查看时自动选最佳类型，
 		      多类型产物时显示类型切换按钮。335 测试通过。
+	v0.20.2：修复隔夜预案/开盘策略「模型把 max_tokens 全部用于思考」——v0.12.1 上调了
+		      热点/总览/看板/预案 4 个调用点的 max_tokens，但 v0.13 新增的隔夜预案与开盘策略
+		      两个调用点（llm/premarket.py）仍为 2000，推理模型（deepseek-v4-flash）思考先占
+		      预算导致正文为空。两个调用点 max_tokens 2000 → 4000，新增回归测试锁定
+		      （tests/test_premarket.py：max_tokens ≥ 4000 + LLM 失败兜底）。338 测试通过。
 """
 
-__version__ = "0.20.1"
+__version__ = "0.20.2"
