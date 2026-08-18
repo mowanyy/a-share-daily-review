@@ -7,6 +7,7 @@
 - open：09:25-09:30（竞价后个股筛选）
 
 供 GitHub Actions 定时调用（python -m daily_review push --type X），也供本地手动调试。
+v0.21.7：失败/跳过也会向飞书推一条 ⏭/❌ 状态提示（避免「没推=无声」，见 _with_status_notice）。
 """
 
 from __future__ import annotations
@@ -200,30 +201,66 @@ def generate(report_type: str, date: str) -> str:
 # ---------------------------------------------------------------- 主入口
 
 
+def _status_notice(status: str, label: str, date: str, message: str) -> str:
+    """非 sent 状态的飞书提示文本（⏭ 跳过 / ❌ 失败）。"""
+    icon = "⏭" if status == "skipped" else "❌"
+    return f"【每日复盘】{icon} {label} · {date}\n{message}"
+
+
+def _try_notify(text: str) -> str:
+    """发送状态提示；失败静默返回告警串（不回抛，不影响主流程/主状态）。"""
+    if not text:
+        return ""
+    try:
+        send_feishu(text)
+    except FeishuError as exc:
+        return f"（状态提示发送失败：{exc}）"
+    return ""
+
+
+def _with_status_notice(result: dict) -> dict:
+    """非 sent 结果：补一条飞书状态提示；提示发送失败仅记录，不改主状态。"""
+    if result.get("status") == "sent":
+        return result
+    text = _status_notice(
+        result["status"],
+        REPORT_TYPE_LABEL.get(result.get("report_type", ""), "报告"),
+        result.get("date", ""),
+        result.get("message", ""),
+    )
+    failed = _try_notify(text)
+    if failed:
+        result = {**result, "message": result["message"] + failed}
+    return result
+
+
 def push_report(report_type: str, date: str | None = None) -> dict:
     """生成报告并推送飞书。返回 {status, report_type, date, message, error}。
 
     status: sent（已推送）| skipped（休市/无数据跳过）| error（失败）
+    v0.21.7：非 sent 状态也会向飞书推一条 ⏭/❌ 状态提示，避免「没推=无声」
+    ——GitHub Actions 排程派发会迟到，失败/跳过只在 Actions 页面根本看不出。
     """
     if report_type not in _REPORT_TYPES:
         raise ValueError(f"report_type 需为 review/plan/open，收到：{report_type}")
 
     # 周末直接跳过（周六日 A 股休市）
     if beijing_now().weekday() >= 5:
-        return {
+        result = {
             "status": "skipped",
             "report_type": report_type,
             "date": date or beijing_today(),
             "message": "周末休市，跳过推送",
             "error": "",
         }
+        return _with_status_notice(result)
 
     date = date or beijing_today()
 
     try:
         md = generate(report_type, date)
     except NoDataError as exc:
-        return {
+        result = {
             "status": "skipped",
             "report_type": report_type,
             "date": date,
@@ -231,29 +268,31 @@ def push_report(report_type: str, date: str | None = None) -> dict:
             "error": "",
         }
     except Exception as exc:  # noqa: BLE001 —— 采集/网络失败也属「跳过」而非崩溃
-        return {
+        result = {
             "status": "error",
             "report_type": report_type,
             "date": date,
             "message": f"报告生成失败：{type(exc).__name__}: {exc}",
             "error": str(exc),
         }
-
-    text = summarize(md, report_type)
-    try:
-        send_feishu(text)
-    except FeishuError as exc:
-        return {
-            "status": "error",
-            "report_type": report_type,
-            "date": date,
-            "message": f"推送失败：{exc}",
-            "error": str(exc),
-        }
-    return {
-        "status": "sent",
-        "report_type": report_type,
-        "date": date,
-        "message": f"已推送{REPORT_TYPE_LABEL[report_type]}（{len(text)} 字）",
-        "error": "",
-    }
+    else:
+        text = summarize(md, report_type)
+        try:
+            send_feishu(text)
+        except FeishuError as exc:
+            result = {
+                "status": "error",
+                "report_type": report_type,
+                "date": date,
+                "message": f"推送失败：{exc}",
+                "error": str(exc),
+            }
+        else:
+            return {
+                "status": "sent",
+                "report_type": report_type,
+                "date": date,
+                "message": f"已推送{REPORT_TYPE_LABEL[report_type]}（{len(text)} 字）",
+                "error": "",
+            }
+    return _with_status_notice(result)

@@ -137,6 +137,97 @@ class TestPushReport:
             push.push_report("dashboard", date="20260817")
 
 
+# ---------------------------------------------------------------- 状态提示（v0.21.7）
+
+
+class TestStatusNotice:
+    """v0.21.7：非 sent 状态也要向飞书推一条 ⏭/❌ 状态提示，避免「没推=无声」。"""
+
+    def _make(self, monkeypatch, *, weekend=False, gen_exc=None, send_impl=None):
+        import daily_review.push as push
+
+        monkeypatch.setattr(push, "beijing_now", _weekend_now if weekend else _workday_now)
+        if gen_exc is not None:
+            monkeypatch.setattr(push, "generate", lambda *a, **kw: (_ for _ in ()).throw(gen_exc))
+        else:
+            monkeypatch.setattr(push, "generate", lambda report_type, date: "# 标题\n\n正文")
+        if send_impl is None:
+            send_impl = lambda text, **kw: {"code": 0}
+        monkeypatch.setattr(push, "send_feishu", send_impl)
+        return push
+
+    def test_weekend_skip_sends_notice(self, monkeypatch):
+        calls: list[str] = []
+        push = self._make(monkeypatch, weekend=True, send_impl=lambda text, **kw: calls.append(text) or {"code": 0})
+        result = push.push_report("review")
+        assert result["status"] == "skipped"
+        assert len(calls) == 1, "跳过时也应发一条飞书状态提示"
+        assert "⏭" in calls[0]
+        assert "周末" in calls[0]
+
+    def test_no_data_skip_sends_notice(self, monkeypatch):
+        calls: list[str] = []
+        push = self._make(
+            monkeypatch,
+            gen_exc=NoDataError("20260817 无涨停数据（非交易日）"),
+            send_impl=lambda text, **kw: calls.append(text) or {"code": 0},
+        )
+        result = push.push_report("review", date="20260817")
+        assert result["status"] == "skipped"
+        assert len(calls) == 1
+        assert "⏭" in calls[0]
+        assert "非交易日" in calls[0]
+
+    def test_generate_error_sends_notice(self, monkeypatch):
+        calls: list[str] = []
+        push = self._make(
+            monkeypatch,
+            gen_exc=RuntimeError("东财网络断"),
+            send_impl=lambda text, **kw: calls.append(text) or {"code": 0},
+        )
+        result = push.push_report("review", date="20260817")
+        assert result["status"] == "error"
+        assert "❌" in calls[0]
+        assert "东财网络断" in calls[0]
+
+    def test_primary_send_failure_sends_notice(self, monkeypatch):
+        """主推送失败 → 补发状态提示；提示也失败 → 静默记录，不二次抛错。"""
+        from daily_review.notify import FeishuError
+
+        calls: list[str] = []
+
+        def send_impl(text, **kw):
+            calls.append(text)
+            raise FeishuError("飞书 webhook 失败")
+
+        push = self._make(monkeypatch, send_impl=send_impl)
+        result = push.push_report("review", date="20260817")
+        assert result["status"] == "error"
+        assert len(calls) == 2  # 主报告 + 状态提示各一次
+        assert "飞书 webhook 失败" in calls[1]
+        assert "状态提示发送失败" in result["message"]
+
+    def test_notice_failure_keeps_skip_status(self, monkeypatch):
+        """跳过分支：状态提示本身发送失败 → 主状态保持 skipped，不抛异常。"""
+        from daily_review.notify import FeishuError
+
+        push = self._make(
+            monkeypatch,
+            gen_exc=NoDataError("20260817 无涨停数据"),
+            send_impl=lambda text, **kw: (_ for _ in ()).throw(FeishuError("webhook 未配置")),
+        )
+        result = push.push_report("review", date="20260817")
+        assert result["status"] == "skipped"
+        assert "状态提示发送失败" in result["message"]
+
+    def test_sent_does_not_send_extra_notice(self, monkeypatch):
+        calls: list[str] = []
+        push = self._make(monkeypatch, send_impl=lambda text, **kw: calls.append(text) or {"code": 0})
+        result = push.push_report("review", date="20260817")
+        assert result["status"] == "sent"
+        assert len(calls) == 1, "成功时只发主报告，不发状态提示"
+
+
 # ---------------------------------------------------------------- 生成（仅验证空数据守卫）
 
 
