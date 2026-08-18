@@ -184,13 +184,13 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      （防迟到重复推送）；push-plan.yml cron 30 0 * * 1-5（北京08:30）→ 30 23 * * 0-4
 	      （UTC 前一日 23:30 = 北京 07:30，0-4 避开周六跨日）；push.py 周末跳过改
 	      **完全静默**（双休日连 ⏭ 也不发），工作日休市/失败仍提示 ⏭/❌。373 测试通过。
-	v0.24：B1 数据新鲜度元信息（Q5 面试真洞）——每个模块 prompt 的输入 JSON 中
-	      注入结构化 `数据可用性`（布尔）与 `数据说明`（字符串），明确告诉 LLM
-	      该维度是否有数据（避免空数据时编造数字）。5 个 payload 函数（ladder/
-	      theme/break/lhb/emotion）、_headline、_build_digest 均加 `数据可用性`/
-	      `数据说明`/`freshness` 字段；premarket 2 个 digest 同加 `数据可用性`；
-	      8 个 prompts/modules/*.md 输入段加数据可用性使用说明（若为 false 必须
-	      输出「数据缺失：{数据说明}」）。413 测试通过。
+	v0.25：B2 采集形状校验（Q2 面试洞）——东财接口返回结构可能突变（list→dict/
+	      None），此前靠 `for item in pool` 在 dict 上迭代 key 抛不明确的
+	      AttributeError，或静默返回空表导致全 0。新增 `_ensure_list`（类型校验
+	      + 告警降级）与 `_clist_diff` 函数，覆盖 5 个解析入口：_pool_json、
+	      fetch_fflow_kline、_lhb_page、fetch_kuaixun 及 5 处 clist diff 访问。
+	      接口形状异常时打印告警 + 返回 []，不再靠 AttributeError 或 truthiness
+	      兜底。420 测试通过。
 """
 
-__version__ = "0.24.0"
+__version__ = "0.25.0"

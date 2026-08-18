@@ -130,12 +130,33 @@ def _pool_url(endpoint: str, trade_date: str, pagesize: int = 300) -> str:
     return f"{POOL_BASE}/{endpoint}?{urlencode(params)}"
 
 
+def _ensure_list(val, field_name: str, source: str = "") -> list:
+    """校验值是否为 list；非 list/None 时告警并返回 []（防接口形状突变致静默空/遍历异常）。
+
+    B2 形状校验：池子/资金流/快讯等接口返回结构可能突变（list→dict/None），
+    若不加校验，`for item in val` 在 dict 上迭代 key 会抛不明确的 AttributeError。
+    """
+    if isinstance(val, list):
+        return val
+    if val is not None:
+        print(f"[{source or 'pool'}] ⚠ 字段 {field_name} 预期 list "
+              f"实际 {type(val).__name__}，已降级为空")
+    return []
+
+
+def _clist_diff(payload: dict, source: str = "") -> list[dict]:
+    """从 clist 响应中安全提取 data.diff 列表，非 list 时告警降级。"""
+    data = payload.get("data") or {}
+    diff = data.get("diff") or []
+    return _ensure_list(diff, "diff", source or "clist")
+
+
 def _pool_json(endpoint: str, trade_date: str, pagesize: int = 300) -> list[dict]:
     _throttle()
     url = _pool_url(endpoint, trade_date, pagesize=pagesize)
     payload = get_json(url, headers=EM_HEADERS)
     data = payload.get("data") or {}
-    return data.get("pool") or []
+    return _ensure_list(data.get("pool"), "pool", "pool_json")
 
 
 def _clist_json(params: dict) -> dict:
@@ -269,7 +290,7 @@ def fetch_fflow_kline(code: str) -> pd.DataFrame:
     }
     payload = _get_json_rotated("api/qt/stock/fflow/kline/get", FFLOW_HOSTS, params)
     data = payload.get("data") or {}
-    klines = data.get("klines") or []
+    klines = _ensure_list(data.get("klines"), "klines", "fflow")
     rows = []
     for line in klines:
         parts = str(line).split(",")
@@ -299,7 +320,7 @@ def fetch_moneyflow_clist(codes: list[str], trade_date: str) -> pd.DataFrame:
         "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
         "fields": "f12,f14,f62,f66,f72",
     })
-    diff = (payload.get("data") or {}).get("diff") or []
+    diff = _clist_diff(payload, "clist")
     want = {str(c).zfill(6) for c in codes}
     rows = [
         {
@@ -399,7 +420,7 @@ def fetch_concept_boards() -> pd.DataFrame:
         "fid": "f3", "pz": 600, "fs": "m:90+t:2",
         "fields": "f12,f14,f3,f62,f128,f140,f136",
     })
-    diff = (payload.get("data") or {}).get("diff") or []
+    diff = _clist_diff(payload, "clist")
     rows = []
     for item in diff:
         rows.append({
@@ -424,7 +445,7 @@ def fetch_board_constituents(board_code: str) -> list[str]:
         "fid": "f3", "po": 1, "pz": 3000, "fs": f"b:{board_code}",
         "fields": "f12",
     })
-    diff = (payload.get("data") or {}).get("diff") or []
+    diff = _clist_diff(payload, "clist")
     return [str(item.get("f12", "")) for item in diff if item.get("f12")]
 
 
@@ -438,7 +459,7 @@ def fetch_stock_industry_map() -> dict[str, str]:
             "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
             "fields": "f12,f100",
         })
-        diff = (payload.get("data") or {}).get("diff") or []
+        diff = _clist_diff(payload, "clist")
         if not diff:
             break
         for item in diff:
@@ -466,7 +487,7 @@ def fetch_market_caps(codes: list[str]) -> dict[str, float]:
         "fields": "f12,f20",
         "fs": ",".join(f"f12:{c}" for c in unique),
     })
-    diff = (payload.get("data") or {}).get("diff") or []
+    diff = _clist_diff(payload, "clist")
     result: dict[str, float] = {}
     for item in diff:
         code = str(item.get("f12", "")).strip()

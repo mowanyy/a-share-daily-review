@@ -17,6 +17,8 @@ from urllib.parse import urlencode
 
 import pandas as pd
 
+from daily_review.data.eastmoney_pool import _ensure_list
+
 from daily_review.data.eastmoney_pool import EM_HEADERS, _num, _throttle
 from daily_review.data.http_client import get_json
 
@@ -58,7 +60,7 @@ def _lhb_page(report_name: str, filter_str: str, page: int, page_size: int,
     if not payload.get("success"):
         return []
     result = payload.get("result") or {}
-    return result.get("data") or []
+    return _ensure_list(result.get("data"), "data", "lhb")
 
 
 def _paginate(report_name: str, filter_str: str,

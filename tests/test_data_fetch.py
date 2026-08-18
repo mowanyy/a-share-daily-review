@@ -78,3 +78,45 @@ class TestSinaParse:
     def test_parse_garbage_line_returns_none(self):
         assert _parse_line("not a quote line") is None
         assert _parse_line('var hq_str_sh000000="该证券品种不存在";') is None
+
+
+# ---------------------------------------------------------------- 形状校验（v0.25 B2）
+
+
+class TestEnsureList:
+    """_ensure_list / _clist_diff 对接口形状突变的防卫。"""
+
+    @staticmethod
+    def _ensure_list(val, field, source):
+        from daily_review.data.eastmoney_pool import _ensure_list
+
+        return _ensure_list(val, field, source)
+
+    def test_list_passed_through(self):
+        assert self._ensure_list([1, 2, 3], "pool", "test") == [1, 2, 3]
+
+    def test_none_returns_empty(self):
+        assert self._ensure_list(None, "pool", "test") == []
+
+    def test_dict_returns_empty(self):
+        assert self._ensure_list({"a": 1}, "pool", "test") == []
+
+    def test_empty_list_returns_empty(self):
+        assert self._ensure_list([], "pool", "test") == []
+
+    def test_clist_diff_extracts_safely(self):
+        from daily_review.data.eastmoney_pool import _clist_diff
+
+        payload = {"data": {"diff": [{"f12": "600000"}]}}
+        assert _clist_diff(payload, "test") == [{"f12": "600000"}]
+
+    def test_clist_diff_missing_returns_empty(self):
+        from daily_review.data.eastmoney_pool import _clist_diff
+
+        assert _clist_diff({}, "test") == []
+
+    def test_clist_diff_dict_data_returns_empty(self):
+        from daily_review.data.eastmoney_pool import _clist_diff
+
+        # 接口返回 data 为 dict 但 diff 为 dict → 告警降级
+        assert _clist_diff({"data": {"diff": {"a": 1}}}, "test") == []

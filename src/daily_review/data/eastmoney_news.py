@@ -16,6 +16,9 @@ from datetime import datetime, timedelta
 
 from daily_review.data.http_client import DEFAULT_HEADERS, get_text
 
+
+from daily_review.data.eastmoney_pool import _ensure_list
+
 _KUAIBASE = "https://newsapi.eastmoney.com/kuaixun/v1/getlist_102_ajaxResult_{pageSize}_{page}_.html"
 _OVERNIGHT_START_HOUR = 18  # 昨日 18:00
 _OVERNIGHT_END_HOUR = 9     # 今早 9:00
@@ -47,7 +50,7 @@ def fetch_kuaixun(page_size: int = 50, page: int = 1) -> list[dict]:
     url = _KUAIBASE.format(pageSize=page_size, page=page)
     raw = get_text(url, encoding="utf-8", headers=_EM_HEADERS)
     data = _strip_jsonp(raw)
-    items = data.get("LivesList") or data.get("data") or []
+    items = _ensure_list(data.get("LivesList"), "LivesList", "kuaixun") or _ensure_list(data.get("data"), "data", "kuaixun")
     results = []
     for item in items:
         results.append({

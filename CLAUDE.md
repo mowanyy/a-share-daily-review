@@ -8,6 +8,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.25.0`：**B2 采集形状校验（Q2 面试洞）——东财接口返回结构突变时不再静默空或抛不明确的 AttributeError**。新增 `_ensure_list`（类型校验 + 告警降级）与 `_clist_diff`，覆盖 5 个解析入口：`_pool_json`、`fetch_fflow_kline`、`_lhb_page`、`fetch_kuaixun` 及 5 处 clist `diff` 访问。接口形状异常（list→dict/None）时打印 `⚠ 字段 … 预期 list 实际 …，已降级为空` 告警 + 返回 `[]`，不再靠 `AttributeError` 或 truthiness 兜底。**420 测试通过**。
+
 `v0.24.0`：**B1 数据新鲜度元信息（Q5 面试真洞）——结构化数据可用性注入每个模块 prompt 输入，避免 LLM 编造**。每个模块输入 JSON 增加 `数据可用性`（布尔）与 `数据说明`（字符串），明确告诉 LLM 该维度有数据还是缺失（缺失时必须输出「数据缺失：{数据说明}」）。涉及 5 个 payload 函数（`reporter.py` 的 `_ladder_payload`/`_theme_payload`/`_break_payload`/`_lhb_payload`/`_emotion_payload`）、`_headline`/`_build_digest` 摘要函数、`premarket.py` 的 2 个 digest 函数；8 个 `prompts/modules/*.md` 输入段同步更新数据可用性说明。**413 测试通过**。
 
 `v0.23.0`：**A 组工程可靠性三洞（面试主动暴露短板）——跨进程单飞锁 + push 幂等 + 权威交易日历**。① 多 worker 单飞锁（A1）：新增 `web/joblock.py`（跨平台非阻塞文件锁：Win `msvcrt.locking`/POSIX `fcntl.flock`），`JobManager` 以进程内 `_running` + 文件锁双通道实现全局单飞（gunicorn workers>1 不再穿透）。② push 幂等（A2）：`data/push_state.json` 记录 (type,date) 已推送，重复触发跳过（`--force` 强制重推），失败/跳过不写状态。③ 权威交易日历（A3）：新增 `data/trade_calendar.py`（上证指数日K 实证生成 1300+ 交易日，现成表替代涨停池探测优先），`pipeline._cached` 归属校验（读缓存内容 `trade_date` 列与目录日期不符→丢弃重拉，防幽灵缓存/旧数据），push 报错文案区分「非交易日（交易所休市）」与「数据未更新」。新增 CLI `calendar` 子命令（`--check`/`--year`/`--update`）。新增 7 个文件。**402 测试通过**。
