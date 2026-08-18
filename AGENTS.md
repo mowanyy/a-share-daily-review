@@ -74,6 +74,11 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 # 战法 ↔ SKILL.md 双向桥（import 外部 skill 转成战法；export 战法导出为 SKILL.md）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review skill import skills/fund-styles/深度价值-张坤型.md
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review skill export strategy.user-xxx --out out.skill.md
+# 飞书定时推送（云端 GitHub Actions 定时：复盘18:00/隔夜预案07:30；本地计划任务准点：开盘策略09:25；手动补发）
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review push --type review|plan|open [--date]
+# 本地计划任务（v0.22）：09:25 开盘策略准点推送，仅周一~周五触发；--dry-run 只打印不创建
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review schedule install --dry-run
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review schedule remove|list
 # 图形启动器（tkinter 窗口；双击根目录 启动.bat 或桌面快捷方式同效；--dry-run 自检不弹窗）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch --dry-run
