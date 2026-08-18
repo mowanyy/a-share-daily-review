@@ -57,6 +57,20 @@ def _fmt_concept_code(v) -> str:
     return s.zfill(6) if s.isdigit() else s
 
 
+def _owns_trade_date(df: pd.DataFrame, trade_date: str) -> bool:
+    """数据日期归属校验（v0.23 A3）：非空行 trade_date 必须全部 == 目标日。
+
+    防幽灵缓存/旧数据污染——CSV 内容与目录日期不符（如盘中快照被当日收盘后误用、
+    手动改坏的缓存）时返回 False，由 _cached 丢弃重拉。
+    """
+    if df.empty or "trade_date" not in df.columns:
+        return True
+    try:
+        return bool((df["trade_date"].astype(str) == trade_date).all())
+    except Exception:
+        return False
+
+
 def _cached(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame],
             *, use_cache: bool = True) -> pd.DataFrame:
     """CSV 缓存优先；空结果不缓存（下次重取）。
@@ -64,12 +78,13 @@ def _cached(name: str, trade_date: str, fetch_fn: Callable[[], pd.DataFrame],
     use_cache=False：跳过缓存直接重取（当日收盘后作废盘中快照用，见 collect）。
     读缓存时对 `code` 列做零填充——CSV 往返会把前导零（如 002428 → 2428）丢失，
     导致与 API 直取（字符串 code）的跨模块匹配（炸板资金流 / 龙虎榜联动）失败。
+    v0.23：读回后做 trade_date 归属校验，不符则视为坏缓存丢弃重拉。
     """
     settings = get_settings()
     if use_cache and settings.cache_enabled:
         try:
             df = load_csv(name, trade_date)
-            if not df.empty:
+            if not df.empty and _owns_trade_date(df, trade_date):
                 return _zfill_codes(df)
         except Exception:
             pass

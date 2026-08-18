@@ -210,9 +210,27 @@ def fetch_dt_pool(trade_date: str) -> pd.DataFrame:
 
 
 def resolve_recent_trade_dates(start: str, n_days: int = 5) -> list[str]:
-    """探测式解析最近交易日：从 start 起逐日拉涨停池，空则回退，取 n 个非空日。
+    """解析最近交易日：权威交易日历优先（上证指数日K 实证表），探测式兜底。
 
-    返回**由近及远**（最新在前）的交易日列表。优先走本地交易日历缓存。
+    返回**由近及远**（最新在前）的交易日列表。
+    v0.23 A3：表内直接离线回推（确定性、无网络）；表缺失/不足 n_days → 现有
+    涨停池探测 + 本地缓存兜底（向后兼容）。
+    """
+    try:
+        from daily_review.data.trade_calendar import recent_trade_dates as cal_recent
+
+        cal = cal_recent(start, n_days)
+        if len(cal) >= n_days:
+            return cal
+    except Exception:
+        pass
+    return _resolve_trade_dates_by_probe(start, n_days)
+
+
+def _resolve_trade_dates_by_probe(start: str, n_days: int = 5) -> list[str]:
+    """探测式兜底：从 start 起逐日拉涨停池，空则回退，取 n 个非空日。
+
+    优先走本地交易日历缓存（data/cache/trade_dates.csv）。
     """
     from daily_review.data.local_cache import add_trade_dates, load_trade_dates
 

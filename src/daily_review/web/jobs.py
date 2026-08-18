@@ -1,4 +1,4 @@
-"""后台复盘任务（Web 端）：threading 单飞，同时只跑一个。
+"""后台复盘任务（Web 端）：threading 单飞 + 跨进程文件锁（v0.23）。
 
 支持三种任务类型：
   - review：盘后复盘（collect → compute → generate_report → 七章报告）
@@ -9,6 +9,9 @@ start() 立即返回 JobState；已有任务在跑则抛 JobBusy（路由 → HT
 线程内：采集 → 指标 → LLM → 渲染
 redirect_stdout 捕获 print 进 job.logs（内存 UTF-8，浏览器端安全）
 内存最多保留 max_done 个已完成任务
+
+v0.23（A1）：`_running` 只是进程内变量，多 worker（gunicorn workers>1）部署会
+穿透——补跨进程文件锁 FileLock（data/jobs.lock），全局单飞跨进程同样生效。
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from daily_review.llm.client import LLMError
+from daily_review.web.joblock import FileLock, LockHeld
 
 PLAN_SECTION = "七、次日预案"
 
@@ -68,13 +72,23 @@ class JobState:
 
 
 class JobManager:
-    """单飞任务管理器。每个 Flask app 一份（测试隔离）。"""
+    """单飞任务管理器。每个 Flask app 一份（测试隔离）。
 
-    def __init__(self, max_done: int = 20):
+    v0.23：进程内 _running + 跨进程文件锁双通道；lock_path 可注入（测试传 tmp 隔离），
+    缺省 data/jobs.lock。
+    """
+
+    def __init__(self, max_done: int = 20, lock_path: str | Path | None = None):
         self._lock = threading.Lock()
         self._jobs: dict[str, JobState] = {}
         self._running: str | None = None
         self._max_done = max_done
+        self._file_lock: FileLock | None = None
+        if lock_path is None:
+            from daily_review.config import get_settings
+
+            lock_path = get_settings().data_dir / "jobs.lock"
+        self._lock_path = Path(lock_path)
 
     # ---------- 对外 ----------
 
@@ -114,6 +128,18 @@ class JobManager:
             )
             self._jobs[job.id] = job
             self._running = job.id
+
+        # 跨进程文件锁：进程内检查通过后仍需抢文件锁（多 worker 场景另一个进程可能也在跑）
+        try:
+            lock = FileLock(self._lock_path)
+            lock.acquire()
+        except LockHeld as exc:
+            with self._lock:
+                self._jobs.pop(job.id, None)
+                self._running = None
+            raise JobBusy(f"已有任务在运行（跨进程锁）：{exc}") from exc
+        self._file_lock = lock
+
         threading.Thread(target=self._run, args=(job,), daemon=True).start()
         return job
 
@@ -137,6 +163,13 @@ class JobManager:
             with self._lock:
                 self._running = None
                 self._prune()
+            self._release_file_lock()
+
+    def _release_file_lock(self) -> None:
+        """任务结束（含异常）释放跨进程文件锁；幂等。"""
+        lock, self._file_lock = self._file_lock, None
+        if lock is not None:
+            lock.release()
 
     def _run_inner(self, job: JobState) -> None:
         from daily_review.web.md import md_to_html, section_html

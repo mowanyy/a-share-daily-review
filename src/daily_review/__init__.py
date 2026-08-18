@@ -184,6 +184,16 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      （防迟到重复推送）；push-plan.yml cron 30 0 * * 1-5（北京08:30）→ 30 23 * * 0-4
 	      （UTC 前一日 23:30 = 北京 07:30，0-4 避开周六跨日）；push.py 周末跳过改
 	      **完全静默**（双休日连 ⏭ 也不发），工作日休市/失败仍提示 ⏭/❌。373 测试通过。
+	v0.23：A 组工程可靠性三洞（面试主动暴露短板）——① A1 跨进程文件锁：新增
+	      web/joblock.py（Win msvcrt / POSIX fcntl 非阻塞锁），JobManager 以进程内
+	      _running + 文件锁双通道实现全局单飞（gunicorn workers>1 不再穿透）；② A2
+	      push 幂等：data/push_state.json 记录 (type,date) 已推送，重复触发跳过（--force
+	      强制重推），失败/跳过不写状态；③ A3 权威交易日历：data/trade_calendar.py
+	      （上证指数日K 实证生成 1300+ 交易日，纯离线回推取代涨停池探测优先），
+	      pipeline._cached 归属校验（防幽灵缓存/旧数据）、push 报错文案区分「非交易日」
+	      与「数据未更新」。新增 CLI calendar 子命令（--check/--year/--update）。
+	      新增 7 个文件：web/joblock.py、data/trade_calendar.py、tests/test_joblock.py、
+	      tests/test_calendar.py 等。402 测试通过。
 """
 
-__version__ = "0.22.0"
+__version__ = "0.23.0"

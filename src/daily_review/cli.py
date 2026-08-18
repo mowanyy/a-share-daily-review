@@ -308,7 +308,7 @@ def _cmd_open(args) -> None:
     return 0
 
 
-def _cmd_push(args) -> None:
+def _cmd_push(args) -> int:
     """生成报告并推送飞书群机器人（v0.21，供 GitHub Actions 定时 / 本地手动调用）。"""
     from daily_review.push import REPORT_TYPE_LABEL, push_report
 
@@ -316,7 +316,7 @@ def _cmd_push(args) -> None:
     if not date:
         print(f"[push] 缺省交易日: {args.type}（北京时间自动探测）")
 
-    result = push_report(args.type, date)
+    result = push_report(args.type, date, force=args.force)
     label = REPORT_TYPE_LABEL[args.type]
     if result["status"] == "sent":
         print(f"[push] ✅ {result['message']}")
@@ -344,6 +344,48 @@ def _cmd_schedule(args) -> int:
         print(f"[schedule] {mark} {r.name}: {r.output}")
         all_ok = all_ok and r.ok
     return 0 if all_ok else 1
+
+
+def _cmd_calendar(args) -> int:
+    """权威交易日历（v0.23 A3）：查看/判定/更新。上证指数日K 实证生成。"""
+    from daily_review.data import trade_calendar as cal
+
+    if args.update:
+        try:
+            dates = cal.refresh()
+        except Exception as exc:  # noqa: BLE001 —— 网络/解析失败属正常降级
+            print(f"[calendar] ❌ 刷新失败：{type(exc).__name__}: {exc}")
+            return 1
+        print(f"[calendar] ✅ 已刷新 {len(dates)} 个交易日 → {cal._table_path()}")
+        return 0
+
+    if args.check:
+        verdict = cal.is_trade_date(args.check)
+        if verdict is None:
+            print(f"[calendar] ⚠ {args.check} 无法判定（日历表缺失/未覆盖，将走探测兜底）")
+            return 1
+        print(f"[calendar] {args.check}：{'交易日' if verdict else '非交易日（休市）'}")
+        return 0
+
+    if args.year:
+        holidays = cal.holidays_of_year(args.year)
+        if not holidays:
+            print(f"[calendar] ⚠ {args.year} 无法判定（日历表缺失/未覆盖 {args.year}）")
+            return 1
+        print(f"[calendar] {args.year} 年工作日休市日（法定节假日等，{len(holidays)} 天）：")
+        for i in range(0, len(holidays), 8):
+            print("  " + "  ".join(holidays[i : i + 8]))
+        return 0
+
+    # 无参：概况
+    dates = cal._load()
+    if not dates:
+        print(f"[calendar] ⚠ 日历表为空（联网失败或未生成）：{cal._table_path()}")
+        print("[calendar] 可手动执行 calendar --update 联网生成")
+        return 1
+    print(f"[calendar] 日历表 {len(dates)} 个交易日，最新 {max(dates)}，文件 {cal._table_path()}")
+    print("[calendar] 用法：calendar --check 20260818 / --year 2026 / --update")
+    return 0
 
 
 def _cmd_update_data(args) -> None:
@@ -596,6 +638,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--type", required=True, choices=["review", "plan", "open"],
         help="报告类型：review=复盘 / plan=隔夜预案 / open=开盘策略",
     )
+    p_push.add_argument(
+        "--force", action="store_true",
+        help="强制重推：忽略幂等（该日已推送过也重新生成并推送）",
+    )
     p_push.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省按北京时间自动探测")
     p_push.set_defaults(func=_cmd_push)
 
@@ -613,6 +659,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_sched_remove.set_defaults(func=_cmd_schedule, action="remove")
     p_sched_list = sched_sub.add_parser("list", help="查询计划任务注册状态")
     p_sched_list.set_defaults(func=_cmd_schedule, action="list")
+
+    p_cal = sub.add_parser(
+        "calendar",
+        help="权威交易日历（v0.23）：查看/判定交易日，上证指数日K 实证生成 data/trade_calendar.csv",
+    )
+    p_cal.add_argument("--check", default="", help="判定单日是否交易日，如 20260818")
+    p_cal.add_argument("--year", type=int, default=0, help="列出该年工作日休市日（法定节假日等）")
+    p_cal.add_argument("--update", action="store_true", help="强制联网刷新日历表")
+    p_cal.set_defaults(func=_cmd_calendar)
 
     p_update = sub.add_parser(
         "update-data",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from daily_review.pipeline import _cached, _fetch_opt, _zfill_codes
+from daily_review.pipeline import _cached, _fetch_opt, _owns_trade_date, _zfill_codes
 
 
 class TestZfillCodes:
@@ -81,6 +81,73 @@ class TestCached:
         df2 = _cached("zt_pool", "20260810", fetch, use_cache=False)
         assert len(fetched) == 1
         assert df2["code"].tolist() == ["600000"]
+
+
+# ---------------------------------------------------------------- 归属校验（v0.23 A3）
+
+
+class TestOwnsTradeDate:
+    def test_matching_rows_ok(self):
+        df = pd.DataFrame({"trade_date": ["20260806", "20260806"]})
+        assert _owns_trade_date(df, "20260806") is True
+
+    def test_mismatch_rows_rejected(self):
+        df = pd.DataFrame({"trade_date": ["20260805", "20260805"]})
+        assert _owns_trade_date(df, "20260806") is False
+
+    def test_partial_mismatch_rejected(self):
+        df = pd.DataFrame({"trade_date": ["20260806", "20260805"]})
+        assert _owns_trade_date(df, "20260806") is False
+
+    def test_empty_df_ok(self):
+        assert _owns_trade_date(pd.DataFrame(), "20260806") is True
+
+    def test_no_trade_date_column_ok(self):
+        df = pd.DataFrame({"code": ["600000"]})
+        assert _owns_trade_date(df, "20260806") is True
+
+
+class TestCachedOwnership:
+    def test_mismatched_cache_discarded_and_refetched(self, tmp_path, monkeypatch):
+        """缓存文件内容日期 != 请求日期 → _cached 丢弃坏缓存，走 fetch_fn 重拉。"""
+        import daily_review.pipeline as pl
+        from daily_review.config import Settings
+
+        settings = Settings(data_dir=tmp_path)
+        monkeypatch.setattr("daily_review.pipeline.get_settings", lambda: settings)
+        pl.save_csv(
+            pd.DataFrame({"trade_date": ["20260805"], "code": ["600000"]}),
+            "zt_pool", "20260806",
+        )  # 预置归属不符的坏缓存
+        fetched: list[int] = []
+
+        def fetch():
+            fetched.append(1)
+            return pd.DataFrame({"trade_date": ["20260806"], "code": ["600000"]})
+
+        out = _cached("zt_pool", "20260806", fetch)
+        assert len(fetched) == 1, "坏缓存被丢弃，必须重新采集"
+        assert out["trade_date"].tolist() == ["20260806"]
+
+    def test_matching_cache_returned_without_fetch(self, tmp_path, monkeypatch):
+        import daily_review.pipeline as pl
+        from daily_review.config import Settings
+
+        settings = Settings(data_dir=tmp_path)
+        monkeypatch.setattr("daily_review.pipeline.get_settings", lambda: settings)
+        pl.save_csv(
+            pd.DataFrame({"trade_date": ["20260806"], "code": ["600000"]}),
+            "zt_pool", "20260806",
+        )
+        fetched: list[int] = []
+
+        def fetch():
+            fetched.append(1)
+            return pd.DataFrame()
+
+        out = _cached("zt_pool", "20260806", fetch)
+        assert fetched == [], "正确归属的缓存应直接命中，不触发采集"
+        assert len(out) == 1
 
 
 class TestRepoSaveCsvAtomic:

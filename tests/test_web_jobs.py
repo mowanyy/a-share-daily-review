@@ -11,6 +11,18 @@ from daily_review.web.jobs import JobBusy, JobManager
 
 
 @pytest.fixture
+def make_jm(tmp_path):
+    """JobManager 工厂：锁文件落到 tmp（v0.23 跨进程文件锁；避免写真实 data/jobs.lock）。"""
+    lock_path = tmp_path / "jobs.lock"
+
+    def _make(**kw):
+        kw.setdefault("lock_path", lock_path)
+        return JobManager(**kw)
+
+    return _make
+
+
+@pytest.fixture
 def fake_pipeline(monkeypatch):
     """monkeypatch collect/compute/generate_report。"""
     import daily_review.llm.reporter as reporter_mod
@@ -44,8 +56,8 @@ def _wait_done(jm, job_id, timeout=5.0):
     raise AssertionError("job 超时未完成")
 
 
-def test_job_done_with_report_and_plan(fake_pipeline):
-    jm = JobManager()
+def test_job_done_with_report_and_plan(fake_pipeline, make_jm):
+    jm = make_jm()
     job = jm.start(trade_date="20260806")
     done = _wait_done(jm, job.id)
     assert done.status == "done"
@@ -55,8 +67,8 @@ def test_job_done_with_report_and_plan(fake_pipeline):
     assert fake_pipeline["llm_calls"] == 1
 
 
-def test_no_llm_skips_report(fake_pipeline):
-    jm = JobManager()
+def test_no_llm_skips_report(fake_pipeline, make_jm):
+    jm = make_jm()
     job = jm.start(trade_date="20260806", no_llm=True)
     done = _wait_done(jm, job.id)
     assert done.status == "done"
@@ -64,7 +76,7 @@ def test_no_llm_skips_report(fake_pipeline):
     assert done.report_html == ""
 
 
-def test_job_busy_single_flight(fake_pipeline, monkeypatch):
+def test_job_busy_single_flight(fake_pipeline, monkeypatch, make_jm):
     import daily_review.pipeline as pipeline_mod
 
     gate = threading.Event()
@@ -74,7 +86,7 @@ def test_job_busy_single_flight(fake_pipeline, monkeypatch):
         return {"date": trade_date}
 
     monkeypatch.setattr(pipeline_mod, "collect", slow_collect)
-    jm = JobManager()
+    jm = make_jm()
     job1 = jm.start(trade_date="20260806")
     with pytest.raises(JobBusy):
         jm.start(trade_date="20260807")
@@ -85,14 +97,14 @@ def test_job_busy_single_flight(fake_pipeline, monkeypatch):
     assert _wait_done(jm, job3.id).status == "done"
 
 
-def test_job_error_sets_error(fake_pipeline, monkeypatch):
+def test_job_error_sets_error(fake_pipeline, monkeypatch, make_jm):
     import daily_review.pipeline as pipeline_mod
 
     def bad_compute(collected):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(pipeline_mod, "compute", bad_compute)
-    jm = JobManager()
+    jm = make_jm()
     job = jm.start(trade_date="20260806")
     done = _wait_done(jm, job.id)
     assert done.status == "error"
@@ -100,8 +112,8 @@ def test_job_error_sets_error(fake_pipeline, monkeypatch):
     assert done.logs  # 异常写入日志
 
 
-def test_prune_keeps_max_done(fake_pipeline):
-    jm = JobManager(max_done=3)
+def test_prune_keeps_max_done(fake_pipeline, make_jm):
+    jm = make_jm(max_done=3)
     ids = []
     for i in range(6):
         job = jm.start(trade_date=f"2026080{i}", no_llm=True)

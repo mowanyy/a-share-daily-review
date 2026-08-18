@@ -3,17 +3,22 @@
 复用现有生成函数（report/premarket），摘要确定性提取（不调 LLM），
 推送走 notify.send_feishu。交易时段语义：
 - review：盘后 18:00（龙虎榜 18:00 完整后）
-- plan：盘前 08:30（隔夜消息面）
-- open：09:25-09:30（竞价后个股筛选）
+- plan：盘前 07:30（隔夜消息面）
+- open：09:25-09:30（竞价后个股筛选，v0.22 起本地计划任务准点触发）
 
 供 GitHub Actions 定时调用（python -m daily_review push --type X），也供本地手动调试。
 v0.21.7：失败/跳过也会向飞书推一条 ⏭/❌ 状态提示（避免「没推=无声」，见 _with_status_notice）。
+v0.23：A2 幂等——(type,date) 已推送过则跳过（--force 强制重推），状态记在
+      data/push_state.json（云端 runner 是全新环境无共享状态，幂等按同源生效）。
 """
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from daily_review.config import get_settings
@@ -127,6 +132,21 @@ def _has_data(indicators: dict) -> bool:
     return int(indicators.get("ladder", {}).get("zt_count", 0) or 0) > 0
 
 
+def _no_data_reason(date: str) -> str:
+    """A3：用权威交易日历区分「非交易日」 vs 「数据未更新」（不再笼统报错）。"""
+    from daily_review.data.trade_calendar import is_trade_date
+
+    try:
+        verdict = is_trade_date(date)
+    except Exception:
+        verdict = None
+    if verdict is False:
+        return "非交易日（交易所休市）"
+    if verdict is True:
+        return "交易日但数据未更新（可能早于 15:00 或接口异常）"
+    return "非交易日或数据未更新"
+
+
 def generate(report_type: str, date: str) -> str:
     """生成报告并落盘 output/，返回 Markdown 全文。
 
@@ -143,7 +163,7 @@ def generate(report_type: str, date: str) -> str:
         collected = collect(date)
         indicators = compute(collected)
         if not _has_data(indicators):
-            raise NoDataError(f"{date} 无涨停数据（非交易日或数据未更新）")
+            raise NoDataError(f"{date} 无涨停数据（{_no_data_reason(date)}）")
         return generate_report(indicators, date)
 
     # plan / open：数据基准是前一交易日
@@ -156,7 +176,7 @@ def generate(report_type: str, date: str) -> str:
         from daily_review.llm.premarket import generate_overnight_plan
 
         if not _has_data(indicators):
-            raise NoDataError(f"{prev_date} 无涨停数据（该日非交易日）")
+            raise NoDataError(f"{prev_date} 无涨停数据（{_no_data_reason(prev_date)}）")
         try:
             news = fetch_overnight_news(date)
         except Exception:
@@ -168,7 +188,7 @@ def generate(report_type: str, date: str) -> str:
     from daily_review.llm.premarket import generate_open_strategy
 
     if not _has_data(indicators):
-        raise NoDataError(f"{prev_date} 无涨停数据（该日非交易日）")
+        raise NoDataError(f"{prev_date} 无涨停数据（{_no_data_reason(prev_date)}）")
 
     # 隔夜预案文案（可能不存在）
     plan_path = get_settings().output_dir / f"{date}_隔夜预案.md"
@@ -196,6 +216,30 @@ def generate(report_type: str, date: str) -> str:
     if not auction_data:
         raise NoDataError(f"{date} 无竞价数据（非交易日或未到竞价时点）")
     return generate_open_strategy(indicators, auction_data, plan_text, date)
+
+
+# ---------------------------------------------------------------- 幂等状态（v0.23 A2）
+
+
+def _state_path() -> Path:
+    """幂等状态文件 data/push_state.json（gitignored；云端 runner 是全新环境无共享状态）。"""
+    return get_settings().data_dir / "push_state.json"
+
+
+def _load_state() -> dict:
+    try:
+        return json.loads(_state_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_state(state: dict) -> None:
+    """原子写状态（tmp + os.replace，与 repo.save_csv 同款防半写）。"""
+    p = _state_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, p)
 
 
 # ---------------------------------------------------------------- 主入口
@@ -234,13 +278,15 @@ def _with_status_notice(result: dict) -> dict:
     return result
 
 
-def push_report(report_type: str, date: str | None = None) -> dict:
+def push_report(report_type: str, date: str | None = None, force: bool = False) -> dict:
     """生成报告并推送飞书。返回 {status, report_type, date, message, error}。
 
     status: sent（已推送）| skipped（休市/无数据跳过）| error（失败）
     v0.21.7：非 sent 状态（除周末外）也会向飞书推一条 ⏭/❌ 状态提示，避免「没推=无声」
     ——GitHub Actions 排程派发会迟到，失败/跳过只在 Actions 页面根本看不出。
     v0.22：仅周末完全静默（双休日连 ⏭ 也不发，零打扰）；工作日休市/失败仍提示。
+    v0.23：A2 幂等——同源 (type, date) 已推送过且非 force 时直接跳过（不发任何飞书
+    消息，免重复打扰）；--force 强制重推并刷新状态；失败/跳过不写状态。
     """
     if report_type not in _REPORT_TYPES:
         raise ValueError(f"report_type 需为 review/plan/open，收到：{report_type}")
@@ -256,6 +302,17 @@ def push_report(report_type: str, date: str | None = None) -> dict:
         }
 
     date = date or beijing_today()
+    key = f"{report_type}_{date}"
+
+    # 幂等：已推送过 → 跳过，不发重复消息
+    if not force and key in _load_state():
+        return {
+            "status": "skipped",
+            "report_type": report_type,
+            "date": date,
+            "message": f"该日已推送过（{REPORT_TYPE_LABEL[report_type]} {date}），--force 可强制重推",
+            "error": "",
+        }
 
     try:
         md = generate(report_type, date)
@@ -288,6 +345,16 @@ def push_report(report_type: str, date: str | None = None) -> dict:
                 "error": str(exc),
             }
         else:
+            # 推送成功才记幂等状态；失败/跳过不写，下次重试仍会尝试
+            _save_state(
+                {
+                    **_load_state(),
+                    key: {
+                        "time": datetime.now().astimezone().isoformat(timespec="seconds"),
+                        "chars": len(text),
+                    },
+                }
+            )
             return {
                 "status": "sent",
                 "report_type": report_type,

@@ -9,6 +9,14 @@ import pytest
 
 from daily_review.push import NoDataError, summarize
 
+
+@pytest.fixture(autouse=True)
+def _isolate_push_state(tmp_path, monkeypatch):
+    """隔离幂等状态文件（v0.23 A2）：落 tmp，避免测试间互相污染真实 data/push_state.json。"""
+    import daily_review.push as push
+
+    monkeypatch.setattr(push, "_state_path", lambda: tmp_path / "push_state.json")
+
 _REVIEW_MD = """# 📊 2026-08-17 复盘（周一）
 
 ## 一、总览
@@ -244,3 +252,95 @@ def test_beijing_today_is_eight_digits():
 
     assert len(push.beijing_today()) == 8
     assert push.beijing_today().isdigit()
+
+
+# ---------------------------------------------------------------- 幂等（v0.23 A2）
+
+
+class TestPushIdempotency:
+    """A2：同源 (type,date) 已推送过 → 跳过（--force 重推）；失败/跳过不写状态。"""
+
+    def _make(self, monkeypatch, tmp_path):
+        import daily_review.push as push
+
+        monkeypatch.setattr(push, "_state_path", lambda: tmp_path / "push_state.json")
+        monkeypatch.setattr(push, "beijing_now", _workday_now)
+        monkeypatch.setattr(push, "generate", lambda report_type, date: "# 标题\n\n正文")
+        calls: list[str] = []
+        monkeypatch.setattr(push, "send_feishu", lambda text, **kw: calls.append(text) or {"code": 0})
+        return push, calls
+
+    def test_second_push_skipped_silently(self, monkeypatch, tmp_path):
+        push, calls = self._make(monkeypatch, tmp_path)
+        r1 = push.push_report("review", date="20260817")
+        assert r1["status"] == "sent"
+        r2 = push.push_report("review", date="20260817")
+        assert r2["status"] == "skipped"
+        assert "已推送过" in r2["message"]
+        assert len(calls) == 1, "重复推送不得再发任何飞书消息（主消息+状态提示都不发）"
+
+    def test_different_type_or_date_not_blocked(self, monkeypatch, tmp_path):
+        push, calls = self._make(monkeypatch, tmp_path)
+        push.push_report("review", date="20260817")
+        r2 = push.push_report("plan", date="20260817")
+        assert r2["status"] == "sent"
+        r3 = push.push_report("review", date="20260818")
+        assert r3["status"] == "sent"
+        assert len(calls) == 3
+
+    def test_force_repushes(self, monkeypatch, tmp_path):
+        push, calls = self._make(monkeypatch, tmp_path)
+        push.push_report("review", date="20260817")
+        r2 = push.push_report("review", date="20260817", force=True)
+        assert r2["status"] == "sent"
+        assert len(calls) == 2
+
+    def test_failure_does_not_record_state(self, monkeypatch, tmp_path):
+        push, calls = self._make(monkeypatch, tmp_path)
+
+        def generate_boom(report_type, date):
+            raise RuntimeError("网络断")
+
+        monkeypatch.setattr(push, "generate", generate_boom)
+        r1 = push.push_report("review", date="20260817")
+        assert r1["status"] == "error"
+        # 失败不写状态 → 恢复后重跑不再被幂等拦截
+        monkeypatch.setattr(push, "generate", lambda report_type, date: "# 标题\n\n正文")
+        r2 = push.push_report("review", date="20260817")
+        assert r2["status"] == "sent"
+
+    def test_no_data_skip_does_not_record_state(self, monkeypatch, tmp_path):
+        push, calls = self._make(monkeypatch, tmp_path)
+        monkeypatch.setattr(push, "generate", lambda rt, d: (_ for _ in ()).throw(NoDataError("非交易日")))
+        push.push_report("review", date="20260817")
+        r2 = push.push_report("review", date="20260817")
+        assert r2["status"] == "skipped"
+        assert "已推送过" not in r2["message"], "跳过不写状态，重试不被幂等拦截"
+
+
+# ---------------------------------------------------------------- A3 报错文案（v0.23）
+
+
+class TestNoDataReason:
+    def _patch(self, monkeypatch, verdict):
+        from daily_review.data import trade_calendar as cal
+
+        import daily_review.push as push
+
+        monkeypatch.setattr(cal, "is_trade_date", lambda date: verdict)
+        return push
+
+    def test_non_trade_day_message(self, monkeypatch):
+        push = self._patch(monkeypatch, False)
+        msg = push._no_data_reason("20260817")
+        assert "非交易日" in msg
+        assert "休市" in msg
+
+    def test_trade_day_no_data_message(self, monkeypatch):
+        push = self._patch(monkeypatch, True)
+        msg = push._no_data_reason("20260817")
+        assert "数据未更新" in msg
+
+    def test_unknown_fallback_message(self, monkeypatch):
+        push = self._patch(monkeypatch, None)
+        assert push._no_data_reason("20260817") == "非交易日或数据未更新"
