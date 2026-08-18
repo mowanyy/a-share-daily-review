@@ -13,7 +13,7 @@
 - **AI 生成报告**：DeepSeek 大模型生成七章 Markdown 复盘 + 隔夜预案 + 开盘策略
 - **交互问答**：RAG 知识库 + 数据工具 function-calling，可问"今天炸板率多少""什么是空间板"
 - **Web 工作台**：浏览器里管理战法、跑复盘、看数据看板、问答
-- **定时推送**：电脑关机也能用 GitHub Actions 在 18:00 / 08:30 / 09:25 自动推送报告摘要到飞书
+- **定时推送**：复盘 18:00 / 隔夜预案 07:30 用 GitHub Actions 云端推送（电脑关机也能收到）；开盘策略 09:25 用本机计划任务**秒级准点**推送（GitHub 排程会迟到，不适合竞价后即时内容）
 
 > 💡 想了解完整需求、数据结构、接口清单等设计细节，请到 [docs/](docs/) 目录查看对应文档。
 
@@ -31,7 +31,7 @@
 | 🖥️ Web 工作台 | 战法/复盘/看板/问答/基金经理/多 Agent 会诊/概念池 |
 | 🎯 个人战法 | 上传战法 → 注入次日预案；战法 ↔ SKILL.md 双向桥 |
 | 👥 多 Agent 通信 | QA ↔ 基金经理互相提问 + 多专家会诊 |
-| 📲 飞书推送 | GitHub Actions 定时推标题+摘要到飞书群 |
+| 📲 飞书推送 | GitHub Actions（复盘/隔夜预案）+ 本地计划任务（开盘策略准点）推摘要到飞书 |
 | 🚀 图形启动器 | tkinter 窗口一键启动 + 桌面快捷方式 |
 
 ---
@@ -152,14 +152,19 @@ python -m daily_review launch --dry-run # 自检不弹窗
 
 或直接双击项目根目录的 `启动.bat`（可生成桌面快捷方式）。
 
-### 7️⃣ 飞书定时推送（可选，需 GitHub Actions）
+### 7️⃣ 飞书定时推送（可选）
 
 ```bash
 # 本地手动测试一次
 python -m daily_review push --type review
+
+# 安装本机计划任务（v0.22）：09:25 开盘策略准点推送，仅周一~周五触发
+python -m daily_review schedule install            # 查看将执行的命令用 --dry-run
 ```
 
-云端定时推送需配置 GitHub Secrets 并启用 Actions，详见 [docs/飞书推送说明.md](docs/飞书推送说明.md)。
+- **开盘策略 09:25**：本机 `schedule install` 秒级准点推送（电脑需开机且能访问飞书）
+- **复盘 18:00 / 隔夜预案 07:30**：云端推送需配置 GitHub Secrets 并启用 Actions
+- 详见 [docs/飞书推送说明.md](docs/飞书推送说明.md)
 
 ---
 

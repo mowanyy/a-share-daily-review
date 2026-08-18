@@ -238,22 +238,22 @@ def push_report(report_type: str, date: str | None = None) -> dict:
     """生成报告并推送飞书。返回 {status, report_type, date, message, error}。
 
     status: sent（已推送）| skipped（休市/无数据跳过）| error（失败）
-    v0.21.7：非 sent 状态也会向飞书推一条 ⏭/❌ 状态提示，避免「没推=无声」
+    v0.21.7：非 sent 状态（除周末外）也会向飞书推一条 ⏭/❌ 状态提示，避免「没推=无声」
     ——GitHub Actions 排程派发会迟到，失败/跳过只在 Actions 页面根本看不出。
+    v0.22：仅周末完全静默（双休日连 ⏭ 也不发，零打扰）；工作日休市/失败仍提示。
     """
     if report_type not in _REPORT_TYPES:
         raise ValueError(f"report_type 需为 review/plan/open，收到：{report_type}")
 
-    # 周末直接跳过（周六日 A 股休市）
+    # 周末直接跳过（周六日 A 股休市）：v0.22 起完全静默，不打扰
     if beijing_now().weekday() >= 5:
-        result = {
+        return {
             "status": "skipped",
             "report_type": report_type,
             "date": date or beijing_today(),
             "message": "周末休市，跳过推送",
             "error": "",
         }
-        return _with_status_notice(result)
 
     date = date or beijing_today()
 

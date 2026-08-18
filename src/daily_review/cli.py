@@ -328,6 +328,24 @@ def _cmd_push(args) -> None:
     return 1
 
 
+def _cmd_schedule(args) -> int:
+    """本地计划任务：准点推送（v0.22，schtasks，仅工作日触发）。"""
+    from daily_review import schedule as sched
+
+    if args.action == "install":
+        results = sched.install(dry_run=args.dry_run)
+    elif args.action == "remove":
+        results = sched.remove()
+    else:  # list
+        results = sched.list_tasks()
+    all_ok = True
+    for r in results:
+        mark = "✅" if r.ok else "❌"
+        print(f"[schedule] {mark} {r.name}: {r.output}")
+        all_ok = all_ok and r.ok
+    return 0 if all_ok else 1
+
+
 def _cmd_update_data(args) -> None:
     """手动一键更新数据：刷新静态缓存 + 重采近 N 天数据。"""
     from daily_review.data import eastmoney_pool as em
@@ -580,6 +598,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_push.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省按北京时间自动探测")
     p_push.set_defaults(func=_cmd_push)
+
+    p_sched = sub.add_parser(
+        "schedule",
+        help="本地计划任务：schtasks 准点推送（v0.22，仅工作日；绕开 GitHub Actions 排程延迟）",
+    )
+    sched_sub = p_sched.add_subparsers(dest="action", required=True)
+    p_sched_install = sched_sub.add_parser("install", help="创建计划任务（09:25 开盘策略，周一~周五）")
+    p_sched_install.add_argument(
+        "--dry-run", action="store_true", help="只打印将执行的 schtasks 命令，不创建"
+    )
+    p_sched_install.set_defaults(func=_cmd_schedule, action="install")
+    p_sched_remove = sched_sub.add_parser("remove", help="删除全部计划任务")
+    p_sched_remove.set_defaults(func=_cmd_schedule, action="remove")
+    p_sched_list = sched_sub.add_parser("list", help="查询计划任务注册状态")
+    p_sched_list.set_defaults(func=_cmd_schedule, action="list")
 
     p_update = sub.add_parser(
         "update-data",

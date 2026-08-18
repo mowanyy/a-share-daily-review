@@ -137,11 +137,11 @@ class TestPushReport:
             push.push_report("dashboard", date="20260817")
 
 
-# ---------------------------------------------------------------- 状态提示（v0.21.7）
+# ---------------------------------------------------------------- 状态提示（v0.21.7 / v0.22）
 
 
 class TestStatusNotice:
-    """v0.21.7：非 sent 状态也要向飞书推一条 ⏭/❌ 状态提示，避免「没推=无声」。"""
+    """状态提示语义：v0.21.7 非 sent 也提示；v0.22 仅周末完全静默（休市/失败仍提示）。"""
 
     def _make(self, monkeypatch, *, weekend=False, gen_exc=None, send_impl=None):
         import daily_review.push as push
@@ -156,16 +156,16 @@ class TestStatusNotice:
         monkeypatch.setattr(push, "send_feishu", send_impl)
         return push
 
-    def test_weekend_skip_sends_notice(self, monkeypatch):
+    def test_weekend_skip_is_silent(self, monkeypatch):
+        """v0.22：双休日完全静默——0 次 send_feishu（连 ⏭ 也不发，零打扰）。"""
         calls: list[str] = []
         push = self._make(monkeypatch, weekend=True, send_impl=lambda text, **kw: calls.append(text) or {"code": 0})
         result = push.push_report("review")
         assert result["status"] == "skipped"
-        assert len(calls) == 1, "跳过时也应发一条飞书状态提示"
-        assert "⏭" in calls[0]
-        assert "周末" in calls[0]
+        assert len(calls) == 0, "周末不得发送任何飞书消息"
 
     def test_no_data_skip_sends_notice(self, monkeypatch):
+        """工作日休市（节假日）仍推 ⏭ 提示，让用户知道为什么没推送。"""
         calls: list[str] = []
         push = self._make(
             monkeypatch,

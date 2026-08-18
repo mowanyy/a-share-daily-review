@@ -2,8 +2,9 @@ name: push-plan-report
 
 on:
   schedule:
-    # 北京时间 08:30（UTC 00:30），周一~周五，盘前隔夜预案推送
-    - cron: '30 0 * * 1-5'
+    # 北京时间 07:30（UTC 前一日 23:30），周日~周四（UTC）⇒ 周一~周五（北京）：
+    # GitHub Actions 排程可能迟到 30-60 分钟，提早触发对冲延迟，保证 9:00 预案窗口前到。
+    - cron: '30 23 * * 0-4'
   workflow_dispatch: {}
 
 jobs:

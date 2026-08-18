@@ -1,9 +1,9 @@
 name: push-open-report
 
 on:
-  schedule:
-    # 北京时间 09:25（UTC 01:25），周一~周五，竞价后开盘策略推送
-    - cron: '25 1 * * 1-5'
+  # 09:25 开盘策略由本机 Windows 计划任务准点推送（v0.22，见 docs/飞书推送说明.md「本地准点推送」）
+  # GitHub Actions 排程会迟到（实测 30-60 分钟），对竞价后即时策略不合格，故摘除 schedule；
+  # 保留 workflow_dispatch 作为出差/手动云端补发兜底（Actions 页 → Run workflow）。
   workflow_dispatch: {}
 
 jobs:

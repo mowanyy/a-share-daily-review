@@ -9,6 +9,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.22.0`：**开盘策略改本地计划任务准点推送 + 隔夜预案提早 07:30 + 仅周末静默**——GitHub Actions `schedule` 派发实测迟到 30-60 分钟甚至漏跑（复盘排程 18:00 该跑实际 18:35、隔夜预案整点未派发），对竞价后即时内容不合格。新增 `src/daily_review/schedule.py` + CLI `schedule` 子命令（`install [--dry-run]`/`remove`/`list`）：用 schtasks 建 **WEEKLY 周一~周五 09:25** 计划任务 `DailyReview-开盘策略`（秒级准点、双休日连进程都不启动），TR 走 `tools/scheduled_push.bat`（cd 项目根 + PYTHONPATH + 日志 `output/scheduled_push_open.log`）；`push-open.yml` 摘除 schedule 只留 `workflow_dispatch`（防迟到重复推送）；`push-plan.yml` cron `30 0 * * 1-5`→`30 23 * * 0-4`（UTC 前一日 23:30 = 北京 07:30，`0-4` 避开周六跨日）；`push.py` 周末跳过改为**完全静默**（双休日连 ⏭ 也不发），工作日休市/失败仍推 ⏭/❌。README/飞书说明/AGENTS/CLAUDE 同步。**373 测试通过**。
+
 `v0.21.7`：**push 失败/跳过也推飞书状态提示（不再无声）+ 排程延迟说明**——实测 GitHub Actions `schedule` 派发会迟到（2026-08-17 复盘排程 18:00 该跑实际 18:35，晚 35 分钟；隔夜预案 08:30 排程当日迟迟未派发），此前非 sent 状态（周末/休市跳过、生成/推送失败）飞书端完全无声（`skipped` 在 Actions 里还 `exit 0` 显绿勾），公司网络又打不开 Actions 页面，只能干等。`push.py` 新增 `_status_notice`/`_try_notify`/`_with_status_notice`：非 sent 结果也向飞书补发一条 **⏭ 跳过 / ❌ 失败** 短消息（含原因），状态提示本身发送失败静默记录、不改主状态；`docs/飞书推送说明.md` 新增「排程延迟与状态提示」小节（实测表现 + Actions 页/gh/api 三种核实方式 + 手动补发命令）。**366 测试通过**。
 
 `v0.21.0`：**定时推送报告到飞书（GitHub Actions 免费云端）**——新增 `notify.py`（飞书群机器人 webhook 推送，支持加签 HMAC-SHA256）与 `push.py`（生成报告 → 提取标题+摘要 → 推送；摘要确定性提取不调 LLM，周末/休市自动跳过）。`config.py` 新增 `FEISHU_WEBHOOK_URL`/`FEISHU_SECRET`；CLI 新增 `push` 子命令（`push --type review|plan|open [--date]`）。新增 3 个 GitHub Actions workflow（`push-review.yml`/`push-plan.yml`/`push-open.yml`）定时：盘后复盘 18:00、盘前隔夜预案 08:30、竞价后开盘策略 09:25（北京时间，cron 转 UTC、`1-5` 避开周末）；LLM 非机密配置写死在 workflow，密钥走 GitHub Secrets（`DEEPSEEK_API_KEY`/`DEEPSEEK_FALLBACK_API_KEY`/`FEISHU_WEBHOOK_URL`）。配套 `docs/飞书推送说明.md`。**360 测试通过**。

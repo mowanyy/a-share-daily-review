@@ -174,6 +174,16 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      _with_status_notice：非 sent 结果补发 ⏭/❌ 状态提示（含原因），提示发送失败
 	      静默记录不改主状态；docs/飞书推送说明.md 补「排程延迟与状态提示」小节。
 	      366 测试通过。
+	v0.22：开盘策略改本地计划任务准点推送 + 隔夜预案提早 07:30 + 仅周末静默——
+	      GitHub Actions schedule 会迟到（实测 30-60 分钟或漏跑），对竞价后即时内容
+	      不合格。新增 src/daily_review/schedule.py + CLI schedule 子命令
+	      （install [--dry-run]/remove/list）：用 schtasks 建 WEEKLY 周一~周五 09:25
+	      任务 DailyReview-开盘策略（/SC WEEKLY /D MON..FRI /ST 09:25 /F），TR 走
+	      tools/scheduled_push.bat（cd 项目根 + PYTHONPATH + 日志 output/
+	      scheduled_push_open.log）；push-open.yml 摘除 schedule 只留 workflow_dispatch
+	      （防迟到重复推送）；push-plan.yml cron 30 0 * * 1-5（北京08:30）→ 30 23 * * 0-4
+	      （UTC 前一日 23:30 = 北京 07:30，0-4 避开周六跨日）；push.py 周末跳过改
+	      **完全静默**（双休日连 ⏭ 也不发），工作日休市/失败仍提示 ⏭/❌。373 测试通过。
 """
 
-__version__ = "0.21.7"
+__version__ = "0.22.0"
