@@ -184,10 +184,11 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      （防迟到重复推送）；push-plan.yml cron 30 0 * * 1-5（北京08:30）→ 30 23 * * 0-4
 	      （UTC 前一日 23:30 = 北京 07:30，0-4 避开周六跨日）；push.py 周末跳过改
 	      **完全静默**（双休日连 ⏭ 也不发），工作日休市/失败仍提示 ⏭/❌。373 测试通过。
-	v0.26：B3 body 解析可重试（Q6 面试洞）——LLM 后端 HTTP 200 但 body 非 JSON
-	      （JSONDecodeError）时，`_post()` 抛出 `LLMError(retryable=True)`，`_post_fallback`
-	      自动用兜底后端重试一次（此前 JSONDecodeError 穿透了 `except LLMError`，
-	      兜底机制完全不会触发）。仅改 `resp.json()` 行外包 try/except。422 测试通过。
+	v0.27：D1 盘中增量监控（Q15 面试洞）——新增 analysis/intraday.py：
+	      take_baseline（早盘基准快照）、snapshot（当前快照与基准 diff）、diff 纯函数
+	      （新涨停/炸板/回封识别）、load_snapshots（时间轴累计曲线）。数据存
+	      data/intraday/{date}/（与收盘数据隔离）。CLI intraday 子命令（baseline、
+	      snapshot、snapshots、缺省=summary）。431 测试通过。
 """
 
-__version__ = "0.26.0"
+__version__ = "0.27.0"

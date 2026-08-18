@@ -8,6 +8,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.27.0`：**D1 盘中增量监控（Q15 面试洞）——早盘基准快照 + 盘中增量 diff + 时间轴累计曲线**。新增 `analysis/intraday.py`：`take_baseline`（基准落盘）、`snapshot`（当前快照与基准 diff）、`diff` 纯函数（新涨停/炸板/回封）、`load_snapshots`（累计曲线）。数据存 `data/intraday/{date}/`（与收盘缓存隔离）。CLI 新增 `intraday` 子命令（`baseline`/`snapshot`/`snapshots`，缺省=summary）。**431 测试通过**。
+
 `v0.26.0`：**B3 body 解析可重试（Q6 面试洞）——LLM 后端 HTTP 200 但 body 非 JSON 时自动切兜底重试**。`_post()` 的 `resp.json()` 行外包 `try/except json.JSONDecodeError` → `raise LLMError(retryable=True)`，此前该异常穿透了 `except LLMError` 的捕获范围，兜底机制完全不会触发。**422 测试通过**。
 
 `v0.25.0`：**B2 采集形状校验（Q2 面试洞）——东财接口返回结构突变时不再静默空或抛不明确的 AttributeError**。新增 `_ensure_list`（类型校验 + 告警降级）与 `_clist_diff`，覆盖 5 个解析入口：`_pool_json`、`fetch_fflow_kline`、`_lhb_page`、`fetch_kuaixun` 及 5 处 clist `diff` 访问。接口形状异常（list→dict/None）时打印 `⚠ 字段 … 预期 list 实际 …，已降级为空` 告警 + 返回 `[]`，不再靠 `AttributeError` 或 truthiness 兜底。**420 测试通过**。

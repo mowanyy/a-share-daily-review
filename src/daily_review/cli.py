@@ -388,6 +388,59 @@ def _cmd_calendar(args) -> int:
     return 0
 
 
+def _cmd_intraday(args) -> int:
+    """盘中增量监控（v0.27 D1）：基准快照/增量 diff/时间轴累计曲线。"""
+    from daily_review.analysis.intraday import load_snapshots, snapshot, summary, take_baseline
+    from daily_review.data import eastmoney_pool as em
+
+    trade_date = args.date or _probe_recent_date()
+    if args.action == "baseline":
+        force = getattr(args, "force", False)
+        bl = take_baseline(trade_date, force=force)
+        print(f"[intraday] 基准已{'强制' if force else '保存'}: {trade_date} "
+              f"涨停{bl['zt_count']} / 炸板{bl['zb_count']} 于 {bl['timestamp']}")
+        return 0
+    if args.action == "snapshot":
+        delta = snapshot(trade_date, force_baseline=args.force_baseline)
+        print(f"[intraday] 快照: {trade_date} 于 {delta['timestamp']}")
+        if delta["new_zt"]:
+            print(f"  🔺 新涨停 {len(delta['new_zt'])} 只: {', '.join(delta['new_zt'][:10])}")
+        if delta["broken"]:
+            print(f"  🔻 炸板 {len(delta['broken'])} 只: {', '.join(delta['broken'][:10])}")
+        if delta["re_sealed"]:
+            print(f"  🔄 回封 {len(delta['re_sealed'])} 只: {', '.join(delta['re_sealed'][:10])}")
+        print(f"  当前涨停 {delta['zt_count']} / 炸板 {delta['zb_count']}")
+        return 0
+    if args.action == "snapshots":
+        records = load_snapshots(trade_date)
+        if not records:
+            print(f"[intraday] {trade_date} 无盘中增量记录")
+            return 1
+        print(f"[intraday] {trade_date} 共 {len(records)} 次快照:")
+        for i, r in enumerate(records, 1):
+            new_n = len(r.get("new_zt", []))
+            broken_n = len(r.get("broken", []))
+            re_n = len(r.get("re_sealed", []))
+            print(f"  #{i} {r['timestamp']} — 涨停{r['zt_count']} 炸板{r['zb_count']} "
+                  f"[+{new_n}新/-{broken_n}炸/↺{re_n}回封]")
+        return 0
+    # 缺省：summary
+    s = summary(trade_date)
+    if s["status"] == "no_data":
+        print(f"[intraday] {trade_date}：{s['message']}")
+        return 1
+    print(f"[intraday] {trade_date} 盘中增量摘要:")
+    print(f"  基准: 涨停{s['baseline_zt_count']} / 炸板{s['baseline_zb_count']}")
+    print(f"  最新: 涨停{s['latest_zt_count']} / 炸板{s['latest_zb_count']} ({s['snapshot_count']} 次快照)")
+    if s["cumulative_new_zt"]:
+        print(f"  累计新涨停 {len(s['cumulative_new_zt'])} 只: {', '.join(s['cumulative_new_zt'][:10])}")
+    if s["cumulative_broken"]:
+        print(f"  累计炸板 {len(s['cumulative_broken'])} 只: {', '.join(s['cumulative_broken'][:10])}")
+    if s["cumulative_re_sealed"]:
+        print(f"  累计回封 {len(s['cumulative_re_sealed'])} 只: {', '.join(s['cumulative_re_sealed'][:10])}")
+    return 0
+
+
 def _cmd_update_data(args) -> None:
     """手动一键更新数据：刷新静态缓存 + 重采近 N 天数据。"""
     from daily_review.data import eastmoney_pool as em
@@ -668,6 +721,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_cal.add_argument("--year", type=int, default=0, help="列出该年工作日休市日（法定节假日等）")
     p_cal.add_argument("--update", action="store_true", help="强制联网刷新日历表")
     p_cal.set_defaults(func=_cmd_calendar)
+
+    p_intra = sub.add_parser(
+        "intraday",
+        help="盘中增量监控（v0.27 D1）：基准快照/增量 diff/时间轴累计曲线",
+    )
+    intra_sub = p_intra.add_subparsers(dest="action", required=True)
+    p_intra_base = intra_sub.add_parser("baseline", help="采集并保存早盘基准快照")
+    p_intra_base.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
+    p_intra_base.add_argument("--force", action="store_true", help="强制刷新基准")
+    p_intra_base.set_defaults(func=_cmd_intraday, action="baseline")
+    p_intra_snap = intra_sub.add_parser("snapshot", help="拉取当前快照，与基准 diff 并落盘")
+    p_intra_snap.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
+    p_intra_snap.add_argument("--force-baseline", action="store_true", help="强制刷新基准（无基准时自动创建）")
+    p_intra_snap.set_defaults(func=_cmd_intraday, action="snapshot")
+    p_intra_hist = intra_sub.add_parser("snapshots", help="列出当日所有增量记录")
+    p_intra_hist.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
+    p_intra_hist.set_defaults(func=_cmd_intraday, action="snapshots")
 
     p_update = sub.add_parser(
         "update-data",
