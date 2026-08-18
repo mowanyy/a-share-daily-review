@@ -9,6 +9,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.26.0`：**B3 body 解析可重试（Q6 面试洞）——LLM 后端 HTTP 200 但 body 非 JSON 时自动切兜底重试**。`_post()` 的 `resp.json()` 行外包 `try/except json.JSONDecodeError` → `raise LLMError(retryable=True)`，此前该异常穿透了 `except LLMError` 的捕获范围，兜底机制完全不会触发。**422 测试通过**。
+
 `v0.25.0`：**B2 采集形状校验（Q2 面试洞）——东财接口返回结构突变时不再静默空或抛不明确的 AttributeError**。新增 `_ensure_list`（类型校验 + 告警降级）与 `_clist_diff`，覆盖 5 个解析入口：`_pool_json`、`fetch_fflow_kline`、`_lhb_page`、`fetch_kuaixun` 及 5 处 clist `diff` 访问。接口形状异常（list→dict/None）时打印 `⚠ 字段 … 预期 list 实际 …，已降级为空` 告警 + 返回 `[]`，不再靠 `AttributeError` 或 truthiness 兜底。**420 测试通过**。
 
 `v0.24.0`：**B1 数据新鲜度元信息（Q5 面试真洞）——结构化数据可用性注入每个模块 prompt 输入，避免 LLM 编造**。每个模块输入 JSON 增加 `数据可用性`（布尔）与 `数据说明`（字符串），明确告诉 LLM 该维度有数据还是缺失（缺失时必须输出「数据缺失：{数据说明}」）。涉及 5 个 payload 函数（`reporter.py` 的 `_ladder_payload`/`_theme_payload`/`_break_payload`/`_lhb_payload`/`_emotion_payload`）、`_headline`/`_build_digest` 摘要函数、`premarket.py` 的 2 个 digest 函数；8 个 `prompts/modules/*.md` 输入段同步更新数据可用性说明。**413 测试通过**。

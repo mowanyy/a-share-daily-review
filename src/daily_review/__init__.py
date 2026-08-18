@@ -184,13 +184,10 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      （防迟到重复推送）；push-plan.yml cron 30 0 * * 1-5（北京08:30）→ 30 23 * * 0-4
 	      （UTC 前一日 23:30 = 北京 07:30，0-4 避开周六跨日）；push.py 周末跳过改
 	      **完全静默**（双休日连 ⏭ 也不发），工作日休市/失败仍提示 ⏭/❌。373 测试通过。
-	v0.25：B2 采集形状校验（Q2 面试洞）——东财接口返回结构可能突变（list→dict/
-	      None），此前靠 `for item in pool` 在 dict 上迭代 key 抛不明确的
-	      AttributeError，或静默返回空表导致全 0。新增 `_ensure_list`（类型校验
-	      + 告警降级）与 `_clist_diff` 函数，覆盖 5 个解析入口：_pool_json、
-	      fetch_fflow_kline、_lhb_page、fetch_kuaixun 及 5 处 clist diff 访问。
-	      接口形状异常时打印告警 + 返回 []，不再靠 AttributeError 或 truthiness
-	      兜底。420 测试通过。
+	v0.26：B3 body 解析可重试（Q6 面试洞）——LLM 后端 HTTP 200 但 body 非 JSON
+	      （JSONDecodeError）时，`_post()` 抛出 `LLMError(retryable=True)`，`_post_fallback`
+	      自动用兜底后端重试一次（此前 JSONDecodeError 穿透了 `except LLMError`，
+	      兜底机制完全不会触发）。仅改 `resp.json()` 行外包 try/except。422 测试通过。
 """
 
-__version__ = "0.25.0"
+__version__ = "0.26.0"

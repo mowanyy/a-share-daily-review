@@ -193,3 +193,42 @@ class TestPostErrorRetryableFlag:
             client._post([{"role": "user", "content": "hi"}], api_key="k", model="m",
                          base_url="https://x", temperature=0, max_tokens=10, timeout=10)
         assert ei.value.retryable is False
+
+    def test_json_decode_error_retryable(self, monkeypatch):
+        """B3：HTTP 200 但 body 非 JSON → _post 抛 LLMError(retryable=True)，走兜底。"""
+        from json import JSONDecodeError
+
+        class _BadResp:
+            status_code = 200
+            text = "not-json-garbage"
+
+            @staticmethod
+            def json():
+                raise JSONDecodeError("Expecting value", "not json", 0)
+
+        monkeypatch.setattr(client.requests, "post", lambda *a, **kw: _BadResp())
+        with pytest.raises(LLMError) as ei:
+            client._post([{"role": "user", "content": "hi"}], api_key="k", model="m",
+                         base_url="https://x", temperature=0, max_tokens=10, timeout=10)
+        assert ei.value.retryable is True
+        assert "非 JSON" in str(ei.value)
+
+    def test_json_decode_error_triggers_fallback(self, monkeypatch):
+        """B3：主后端 JSONDecodeError → 自动切兜底重试，返回兜底回复。"""
+        s = get_settings()
+        monkeypatch.setattr(s, "llm_fallback_api_key", "sk-fallback")
+        monkeypatch.setattr(s, "llm_fallback_base_url", "https://api.deepseek.com")
+        monkeypatch.setattr(s, "llm_fallback_model", "deepseek-chat")
+        calls = []
+
+        def fake(messages, *, api_key, model, base_url, temperature, max_tokens, timeout,
+                 tools=None, tool_choice=None):
+            calls.append({"api_key": api_key, "model": model})
+            if api_key == "sk-primary":
+                raise LLMError("主后端返回非JSON", retryable=True)
+            return {"index": 0, "message": {"role": "assistant", "content": "兜底成功"}, "finish_reason": "stop"}
+
+        monkeypatch.setattr(client, "_post", fake)
+        out = client.chat([{"role": "user", "content": "hi"}], **_PRIMARY)
+        assert out == "兜底成功"
+        assert [c["api_key"] for c in calls] == ["sk-primary", "sk-fallback"]

@@ -92,7 +92,14 @@ def _post(
             retryable=resp.status_code >= 500,
         )
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except json.JSONDecodeError:
+        raise LLMError(
+            f"LLM 返回非 JSON：HTTP {resp.status_code} body={resp.text[:200]}",
+            retryable=True,
+        )
+
     try:
         return data["choices"][0]
     except (KeyError, IndexError, TypeError) as exc:
