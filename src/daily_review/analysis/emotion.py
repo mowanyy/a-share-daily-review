@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pandas as pd
 
 # ---------------------------------------------------------------- 锚点（经验值，待校准）
@@ -117,6 +119,57 @@ def _weighted(components: dict) -> tuple[float | None, dict]:
     weights_used = {k: round(w / total, 4) for k, w in used.items()}
     score = sum(components[k] * weights_used[k] for k in used)
     return round(score, 1), weights_used
+
+
+# ---------------------------------------------------------------- 盘中进度归一化（v0.28 D2）
+
+
+def _intraday_progress(now: datetime) -> float:
+    """按当前时间返回涨停进度系数 0.0-1.0（经验曲线）。
+
+    基于历史涨停时间分布：早盘 09:30-10:00 是涨停密集区（约 50% 涨停出现），
+    之后逐步减少。盘中反推全天涨停数时用此系数放大。
+    """
+    minutes = now.hour * 60 + now.minute
+    # (分钟, 进度) 锚点，线性插值
+    anchors = [
+        (0, 0.0), (570, 0.05), (585, 0.15), (600, 0.50), (630, 0.60),
+        (660, 0.70), (690, 0.75), (810, 0.80), (840, 0.85), (870, 0.90),
+        (897, 0.98), (900, 1.0),
+    ]
+    if minutes <= anchors[0][0]:
+        return anchors[0][1]
+    if minutes >= anchors[-1][0]:
+        return anchors[-1][1]
+    for i in range(len(anchors) - 1):
+        if anchors[i][0] <= minutes <= anchors[i + 1][0]:
+            frac = (minutes - anchors[i][0]) / (anchors[i + 1][0] - anchors[i][0])
+            return round(anchors[i][1] + frac * (anchors[i + 1][1] - anchors[i][1]), 4)
+    return anchors[-1][1]
+
+
+def _normalize_intraday(raw: dict, progress: float) -> dict:
+    """对盘中 raw 做进度归一化，返回修正后 dict（原始 dict 不变）。
+
+    - zt_count：按进度放大（除 0.05 兜底，防止早盘除零）
+    - dt_count：同 zt_count 处理
+    - max_lb / break_rate：不变（空间板高度确定不变；炸板率是盘中信号不过度修正）
+    """
+    out = dict(raw)
+    if "zt_count" in out:
+        out["zt_count"] = int(out["zt_count"] / max(progress, 0.05))
+    if "dt_count" in out:
+        out["dt_count"] = int(out["dt_count"] / max(progress, 0.05))
+    return out
+
+
+def _ewma_smooth(intraday_score: float, prev_close_score: float, progress: float) -> float:
+    """EWMA 平滑：alpha 随进度递增，早盘更依赖前日收盘，尾盘更依赖盘中数据。
+
+    alpha = 0.3 + 0.5 * progress（范围 0.3-0.8）
+    """
+    alpha = 0.3 + 0.5 * progress
+    return round(alpha * intraday_score + (1 - alpha) * prev_close_score, 1)
 
 
 # ---------------------------------------------------------------- 阶段判定
@@ -243,6 +296,26 @@ def compute_emotion(
         return _unavailable("涨停池为空，情绪温度不可用")
 
     avail_scores = [s["score"] for s in series if s.get("ok")]
+
+    # v0.28 D2：盘中进度归一化 + EWMA 平滑
+    if is_intraday:
+        progress = _intraday_progress(datetime.now())
+        raw = today_ser["raw"]
+        norm_raw = _normalize_intraday(raw, progress)
+        comp = today_ser["components"]
+        comp["zt"] = _piecewise(norm_raw["zt_count"], ZT_ANCHORS)
+        if "dt" in comp:
+            comp["dt"] = _piecewise(norm_raw["dt_count"], DT_ANCHORS)
+        score, wu = _weighted(comp)
+        prev_close = avail_scores[-2] if len(avail_scores) >= 2 else score
+        smoothed = _ewma_smooth(score, prev_close, progress)
+        today_ser["score"] = smoothed
+        today_ser["components"] = comp
+        today_ser["raw"] = norm_raw
+        today_ser["weights_used"] = wu
+        avail_scores[-1] = smoothed
+        notes.append(f"盘中归一化（进度 {progress*100:.0f}%，EWMA 平滑）")
+
     stage, reason = _judge_stage(avail_scores)
 
     # 缺失说明

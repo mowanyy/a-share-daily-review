@@ -9,6 +9,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.28.0`：**D2 盘中情绪进度归一化（Q16 面试洞）——盘中情绪温度不再仅加 notes，按时间进度归一化 + EWMA 平滑**。新增 `_intraday_progress`（经验曲线 09:30→0.05→10:00→0.50→14:57→0.98）、`_normalize_intraday`（zt_count/dt_count 按进度放大）、`_ewma_smooth`（alpha=0.3+0.5*progress 动态加权）。`compute_emotion(is_intraday=True)` 时，先用归一化 raw 重计分，再对前日收盘分做 EWMA 平滑，使早盘分数更接近收盘最终值。**439 测试通过**。
+
 `v0.27.0`：**D1 盘中增量监控（Q15 面试洞）——早盘基准快照 + 盘中增量 diff + 时间轴累计曲线**。新增 `analysis/intraday.py`：`take_baseline`（基准落盘）、`snapshot`（当前快照与基准 diff）、`diff` 纯函数（新涨停/炸板/回封）、`load_snapshots`（累计曲线）。数据存 `data/intraday/{date}/`（与收盘缓存隔离）。CLI 新增 `intraday` 子命令（`baseline`/`snapshot`/`snapshots`，缺省=summary）。**431 测试通过**。
 
 `v0.26.0`：**B3 body 解析可重试（Q6 面试洞）——LLM 后端 HTTP 200 但 body 非 JSON 时自动切兜底重试**。`_post()` 的 `resp.json()` 行外包 `try/except json.JSONDecodeError` → `raise LLMError(retryable=True)`，此前该异常穿透了 `except LLMError` 的捕获范围，兜底机制完全不会触发。**422 测试通过**。

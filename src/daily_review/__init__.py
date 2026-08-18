@@ -184,11 +184,11 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      （防迟到重复推送）；push-plan.yml cron 30 0 * * 1-5（北京08:30）→ 30 23 * * 0-4
 	      （UTC 前一日 23:30 = 北京 07:30，0-4 避开周六跨日）；push.py 周末跳过改
 	      **完全静默**（双休日连 ⏭ 也不发），工作日休市/失败仍提示 ⏭/❌。373 测试通过。
-	v0.27：D1 盘中增量监控（Q15 面试洞）——新增 analysis/intraday.py：
-	      take_baseline（早盘基准快照）、snapshot（当前快照与基准 diff）、diff 纯函数
-	      （新涨停/炸板/回封识别）、load_snapshots（时间轴累计曲线）。数据存
-	      data/intraday/{date}/（与收盘数据隔离）。CLI intraday 子命令（baseline、
-	      snapshot、snapshots、缺省=summary）。431 测试通过。
+	v0.28：D2 盘中情绪进度归一化（Q16 面试洞）——新增 _intraday_progress
+	      （按时间进度 0-1 经验曲线）、_normalize_intraday（zt_count/dt_count 按
+	      进度放大）、_ewma_smooth（alpha=0.3+0.5*progress 动态加权）。盘中
+	      compute_emotion 不再仅加 notes，而是用归一化 raw 重新计分后做 EWMA 平滑，
+	      使早盘分数更接近收盘最终值。439 测试通过。
 """
 
-__version__ = "0.27.0"
+__version__ = "0.28.0"

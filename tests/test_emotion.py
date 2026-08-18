@@ -254,3 +254,91 @@ class TestComputeEmotion:
         assert "promote" not in r["components"]
         assert abs(sum(r["weights_used"].values()) - 1.0) < 1e-6
         assert any("promote 数据缺失" in n for n in r["notes"])
+
+
+# ---------------------------------------------------------------- 盘中归一化（v0.28 D2）
+
+
+class TestIntradayProgress:
+    def test_progress_at_market_open(self):
+        from daily_review.analysis.emotion import _intraday_progress
+        from datetime import datetime
+
+        # 09:30 → 约 0.05
+        p = _intraday_progress(datetime(2026, 8, 18, 9, 30))
+        assert 0.04 <= p <= 0.06
+
+    def test_progress_at_1000(self):
+        from daily_review.analysis.emotion import _intraday_progress
+        from datetime import datetime
+
+        # 10:00 → 0.50
+        p = _intraday_progress(datetime(2026, 8, 18, 10, 0))
+        assert 0.49 <= p <= 0.51
+
+    def test_progress_at_close(self):
+        from daily_review.analysis.emotion import _intraday_progress
+        from datetime import datetime
+
+        # 15:00 → 1.0
+        p = _intraday_progress(datetime(2026, 8, 18, 15, 0))
+        assert p == 1.0
+
+
+class TestNormalizeIntraday:
+    def test_zt_count_scaled_up(self):
+        from daily_review.analysis.emotion import _normalize_intraday
+
+        raw = {"zt_count": 30, "max_lb": 5, "break_rate": 0.15, "dt_count": 5}
+        norm = _normalize_intraday(raw, 0.50)
+        assert norm["zt_count"] == 60  # 30 / 0.50
+        assert norm["max_lb"] == 5  # 不变
+        assert norm["break_rate"] == 0.15  # 不变
+        assert norm["dt_count"] == 10  # 5 / 0.50
+
+    def test_zero_progress_uses_floor(self):
+        from daily_review.analysis.emotion import _normalize_intraday
+
+        raw = {"zt_count": 1, "max_lb": 0}
+        norm = _normalize_intraday(raw, 0.0)
+        assert norm["zt_count"] == 20  # 1 / 0.05 = 20
+
+
+class TestEWMASmooth:
+    def test_alpha_at_half_progress(self):
+        from daily_review.analysis.emotion import _ewma_smooth
+
+        # progress=0.50 → alpha=0.55
+        smoothed = _ewma_smooth(70, 50, 0.50)
+        assert smoothed == 61.0  # 0.55*70 + 0.45*50 = 38.5 + 22.5 = 61.0
+
+    def test_alpha_at_zero_progress(self):
+        from daily_review.analysis.emotion import _ewma_smooth
+
+        # progress=0.0 → alpha=0.3
+        smoothed = _ewma_smooth(70, 50, 0.0)
+        assert smoothed == 56.0  # 0.3*70 + 0.7*50 = 21 + 35 = 56.0
+
+
+class TestIntradayEmotion:
+    def test_intraday_score_uses_normalized_raw(self, monkeypatch):
+        """盘中 mode 使用归一化后的 zt_count 计算分数，早盘分数应高于直接用 raw。"""
+        from daily_review.analysis.emotion import compute_emotion
+        from datetime import datetime
+
+        class _FrozenNow:
+            """模拟 datetime.now() 返回固定时间。"""
+            @classmethod
+            def now(cls):
+                return datetime(2026, 8, 18, 10, 0)
+
+        monkeypatch.setattr("daily_review.analysis.emotion.datetime", _FrozenNow)
+        zt = _zt("20260806", [("000001", 5)] + [(f"{i:06d}", 1) for i in range(2, 21)])
+        prev = _zt("20260805", [("000001", 5)] + [(f"{i:06d}", 1) for i in range(2, 31)])
+        hist = [{"date": "20260805", "zt": prev, "zb": _zb("20260805", []), "dt": _dt("20260805", []),
+                 "zb_ok": True, "dt_ok": True}]
+        r = compute_emotion(zt, _zb("20260806", []), _dt("20260806", []), hist, is_intraday=True)
+        assert r["available"] is True
+        assert any("进度" in n and "EWMA" in n for n in r["notes"])
+        r2 = compute_emotion(zt, _zb("20260806", []), _dt("20260806", []), hist, is_intraday=False)
+        assert r["score"] != r2["score"]
