@@ -30,7 +30,7 @@ def _minimal_indicators() -> dict:
     return {
         "ladder": {"trade_date": "20260814", "zt_count": 50, "lianban_count": 12,
                    "max_lb": 5, "max_lb_stock": "600001 测试", "break_rate": 0.2},
-        "emotion": {"score": 60, "stage": "修复期", "stage_reason": "涨停增加"},
+        "emotion": {"score": 60, "stage": "修复期", "stage_reason": "涨停增加", "available": True},
         "themes": [],
     }
 
@@ -79,3 +79,25 @@ def test_overnight_plan_llm_failure_falls_back(monkeypatch, tmp_path):
     assert "LLM 生成失败" in md
     assert "标题A" in md and "标题B" in md  # 兜底含原始快讯
     assert out.exists()
+
+
+# ---------------------------------------------------------------- digest 新鲜度（v0.24 B1）
+
+
+class TestDigestFreshness:
+    """隔夜预案/开盘策略 digest 含数据可用性元信息。"""
+
+    def test_overnight_has_freshness(self):
+        from daily_review.llm.premarket import _overnight_digest
+
+        d = _overnight_digest(_minimal_indicators())
+        assert "数据可用性" in d
+        assert d["数据可用性"]["涨停梯队"] is True
+        assert d["数据可用性"]["情绪温度"] is True
+
+    def test_open_strategy_has_freshness(self):
+        from daily_review.llm.premarket import _open_strategy_digest
+
+        d = _open_strategy_digest(_minimal_indicators())
+        assert "数据可用性" in d
+        assert d["数据可用性"]["涨停梯队"] is True

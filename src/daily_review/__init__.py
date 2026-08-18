@@ -184,16 +184,13 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      （防迟到重复推送）；push-plan.yml cron 30 0 * * 1-5（北京08:30）→ 30 23 * * 0-4
 	      （UTC 前一日 23:30 = 北京 07:30，0-4 避开周六跨日）；push.py 周末跳过改
 	      **完全静默**（双休日连 ⏭ 也不发），工作日休市/失败仍提示 ⏭/❌。373 测试通过。
-	v0.23：A 组工程可靠性三洞（面试主动暴露短板）——① A1 跨进程文件锁：新增
-	      web/joblock.py（Win msvcrt / POSIX fcntl 非阻塞锁），JobManager 以进程内
-	      _running + 文件锁双通道实现全局单飞（gunicorn workers>1 不再穿透）；② A2
-	      push 幂等：data/push_state.json 记录 (type,date) 已推送，重复触发跳过（--force
-	      强制重推），失败/跳过不写状态；③ A3 权威交易日历：data/trade_calendar.py
-	      （上证指数日K 实证生成 1300+ 交易日，纯离线回推取代涨停池探测优先），
-	      pipeline._cached 归属校验（防幽灵缓存/旧数据）、push 报错文案区分「非交易日」
-	      与「数据未更新」。新增 CLI calendar 子命令（--check/--year/--update）。
-	      新增 7 个文件：web/joblock.py、data/trade_calendar.py、tests/test_joblock.py、
-	      tests/test_calendar.py 等。402 测试通过。
+	v0.24：B1 数据新鲜度元信息（Q5 面试真洞）——每个模块 prompt 的输入 JSON 中
+	      注入结构化 `数据可用性`（布尔）与 `数据说明`（字符串），明确告诉 LLM
+	      该维度是否有数据（避免空数据时编造数字）。5 个 payload 函数（ladder/
+	      theme/break/lhb/emotion）、_headline、_build_digest 均加 `数据可用性`/
+	      `数据说明`/`freshness` 字段；premarket 2 个 digest 同加 `数据可用性`；
+	      8 个 prompts/modules/*.md 输入段加数据可用性使用说明（若为 false 必须
+	      输出「数据缺失：{数据说明}」）。413 测试通过。
 """
 
-__version__ = "0.23.0"
+__version__ = "0.24.0"

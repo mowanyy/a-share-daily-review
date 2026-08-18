@@ -74,11 +74,15 @@ def _ladder_payload(ind: dict) -> dict:
         {k: r.get(k) for k in ("code", "name", "lb_num", "first_limit_time", "open_times", "seal_amount", "industry", "concepts")}
         for r in ind.get("zt_pool", [])
     ]
+    ladder = ind.get("ladder", {})
+    available = ladder.get("zt_count", 0) > 0
     return {
+        "数据可用性": available,
+        "数据说明": "数据完整" if available else "涨停池为空（数据未更新）",
         "连板统计": stats,
         "当日涨停池": pool,
         # 已核算梯队分组（高度→数量/代表/弱封标记）：LLM 必须原样引用，禁止重算
-        "梯队分组(已核算)": ind.get("ladder", {}).get("ladder", []),
+        "梯队分组(已核算)": ladder.get("ladder", []),
     }
 
 
@@ -100,12 +104,20 @@ def _ladder_forced_headline(ind: dict) -> str:
 
 
 def _theme_payload(ind: dict) -> dict:
-    return {"当日各题材": ind.get("themes", [])}
+    themes = ind.get("themes", [])
+    return {
+        "数据可用性": bool(themes),
+        "数据说明": f"{len(themes)} 个题材" if themes else "数据缺失",
+        "当日各题材": themes,
+    }
 
 
 def _break_payload(ind: dict) -> dict:
     brk = ind.get("break", {})
+    available = brk.get("break_count", 0) > 0
     return {
+        "数据可用性": available,
+        "数据说明": "数据完整" if available else "炸板数据缺失",
         "炸板概览": {"break_count": brk.get("break_count"), "break_rate": brk.get("break_rate")},
         "炸板股资金流向": brk.get("table", []),
     }
@@ -114,7 +126,10 @@ def _break_payload(ind: dict) -> dict:
 def _lhb_payload(ind: dict) -> dict:
     """龙虎榜载荷（对齐 module.lhb 输入契约）。未采集/为空时返回空结构。"""
     lhb = ind.get("lhb") or {}
+    available = lhb.get("overview", {}).get("stock_count", 0) > 0
     return {
+        "数据可用性": available,
+        "数据说明": "数据完整" if available else "龙虎榜数据未更新（盘后 18:00 后）",
         "龙虎榜概览": lhb.get("overview"),
         "个股净买排行": lhb.get("net_rank", []),
         "知名游资动向": lhb.get("hotmoney", []),
@@ -127,7 +142,10 @@ def _lhb_payload(ind: dict) -> dict:
 def _emotion_payload(ind: dict) -> dict:
     """情绪温度载荷（对齐 module.emotion 输入契约）。"""
     emo = ind.get("emotion") or {}
+    notes = emo.get("notes", [])
     return {
+        "数据可用性": emo.get("available", False),
+        "数据说明": notes[0] if notes else "数据完整",
         "情绪温度(已核算)": {
             "score": emo.get("score"),
             "stage": emo.get("stage"),
@@ -140,7 +158,7 @@ def _emotion_payload(ind: dict) -> dict:
         },
         "成分分(已核算)": emo.get("components", {}),
         "原始输入": emo.get("raw", {}),
-        "缺失说明": emo.get("notes", []),
+        "缺失说明": notes,
     }
 
 
@@ -371,6 +389,23 @@ def _module_chapter(
     return f"## {title}\n\n{_strip_section_heading(body, title)}"
 
 
+def _freshness(ind: dict) -> dict:
+    """各维度数据可用性汇总（v0.24 B1：结构化新鲜度，LLM 判断哪些有数据再下笔）。"""
+    ladder = ind.get("ladder", {})
+    lhb = ind.get("lhb") or {}
+    emo = ind.get("emotion") or {}
+    brk = ind.get("break", {})
+    return {
+        "涨停梯队": ladder.get("zt_count", 0) > 0,
+        "题材": bool(ind.get("themes")),
+        "炸板资金": brk.get("break_count", 0) > 0,
+        "龙虎榜": lhb.get("overview", {}).get("stock_count", 0) > 0,
+        "情绪温度": emo.get("available", False),
+        "概念板块": bool(ind.get("concept_boards")),
+        "说明": "true=有数据 / false=数据缺失（采集失败或未到更新时间）；真实 0 家也为 true。",
+    }
+
+
 def _headline(ind: dict) -> dict:
     """总览所需核心数据（供分析师写「一、总览」）。"""
     ladder = ind.get("ladder", {})
@@ -387,6 +422,7 @@ def _headline(ind: dict) -> dict:
         "emotion_score": emo.get("score"),
         "emotion_stage": emo.get("stage"),
         "emotion_reason": emo.get("stage_reason"),
+        "freshness": _freshness(ind),
     }
 
 
@@ -493,8 +529,11 @@ def _build_digest(ind: dict) -> dict:
     """紧凑摘要：三大章结论的浓缩，供「总览 + 次日预案」调用使用（避免回抄全文超 token）。"""
     ladder = ind.get("ladder", {})
     brk = ind.get("break", {})
+    lhb = ind.get("lhb") or {}
+    emo = ind.get("emotion") or {}
     return {
         "核心数据": _headline(ind),
+        "数据可用性": _freshness(ind),
         "梯队要点": {
             "晋级率": ladder.get("promotion", {}),
             "高度序列": ladder.get("height_series", []),

@@ -8,6 +8,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.24.0`：**B1 数据新鲜度元信息（Q5 面试真洞）——结构化数据可用性注入每个模块 prompt 输入，避免 LLM 编造**。每个模块输入 JSON 增加 `数据可用性`（布尔）与 `数据说明`（字符串），明确告诉 LLM 该维度有数据还是缺失（缺失时必须输出「数据缺失：{数据说明}」）。涉及 5 个 payload 函数（`reporter.py` 的 `_ladder_payload`/`_theme_payload`/`_break_payload`/`_lhb_payload`/`_emotion_payload`）、`_headline`/`_build_digest` 摘要函数、`premarket.py` 的 2 个 digest 函数；8 个 `prompts/modules/*.md` 输入段同步更新数据可用性说明。**413 测试通过**。
+
 `v0.23.0`：**A 组工程可靠性三洞（面试主动暴露短板）——跨进程单飞锁 + push 幂等 + 权威交易日历**。① 多 worker 单飞锁（A1）：新增 `web/joblock.py`（跨平台非阻塞文件锁：Win `msvcrt.locking`/POSIX `fcntl.flock`），`JobManager` 以进程内 `_running` + 文件锁双通道实现全局单飞（gunicorn workers>1 不再穿透）。② push 幂等（A2）：`data/push_state.json` 记录 (type,date) 已推送，重复触发跳过（`--force` 强制重推），失败/跳过不写状态。③ 权威交易日历（A3）：新增 `data/trade_calendar.py`（上证指数日K 实证生成 1300+ 交易日，现成表替代涨停池探测优先），`pipeline._cached` 归属校验（读缓存内容 `trade_date` 列与目录日期不符→丢弃重拉，防幽灵缓存/旧数据），push 报错文案区分「非交易日（交易所休市）」与「数据未更新」。新增 CLI `calendar` 子命令（`--check`/`--year`/`--update`）。新增 7 个文件。**402 测试通过**。
 
 `v0.22.0`：**开盘策略改本地计划任务准点推送 + 隔夜预案提早 07:30 + 仅周末静默**——GitHub Actions `schedule` 派发实测迟到 30-60 分钟甚至漏跑（复盘排程 18:00 该跑实际 18:35、隔夜预案整点未派发），对竞价后即时内容不合格。新增 `src/daily_review/schedule.py` + CLI `schedule` 子命令（`install [--dry-run]`/`remove`/`list`）：用 schtasks 建 **WEEKLY 周一~周五 09:25** 计划任务 `DailyReview-开盘策略`（秒级准点、双休日连进程都不启动），TR 走 `tools/scheduled_push.bat`（cd 项目根 + PYTHONPATH + 日志 `output/scheduled_push_open.log`）；`push-open.yml` 摘除 schedule 只留 `workflow_dispatch`（防迟到重复推送）；`push-plan.yml` cron `30 0 * * 1-5`→`30 23 * * 0-4`（UTC 前一日 23:30 = 北京 07:30，`0-4` 避开周六跨日）；`push.py` 周末跳过改为**完全静默**（双休日连 ⏭ 也不发），工作日休市/失败仍推 ⏭/❌。README/飞书说明/AGENTS/CLAUDE 同步。**373 测试通过**。

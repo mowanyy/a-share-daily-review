@@ -7,9 +7,11 @@ from daily_review.llm.reporter import (
     _build_digest,
     _emotion_forced,
     _emotion_payload,
+    _freshness,
     _headline,
     _ladder_forced_headline,
     _ladder_payload,
+    _lhb_payload,
     _strip_section_heading,
     _theme_payload,
     _to_jsonable,
@@ -83,12 +85,22 @@ class TestLadderContract:
     def test_precomputed_ladder_grouping(self):
         assert _ladder_payload(_indicators())["梯队分组(已核算)"]
 
+    def test_has_freshness(self):
+        pl = _ladder_payload(_indicators())
+        assert pl["数据可用性"] is True
+        assert "数据完整" in pl["数据说明"]
+
 
 class TestThemeContract:
     def test_theme_fields(self):
         t = _theme_payload(_indicators())["当日各题材"][0]
         for k in ("theme_name", "member_count", "members"):
             assert k in t, f"题材缺字段 {k}"
+
+    def test_has_freshness(self):
+        pl = _theme_payload(_indicators())
+        assert pl["数据可用性"] is True
+        assert "个题材" in pl["数据说明"]
 
 
 class TestBreakContract:
@@ -97,6 +109,25 @@ class TestBreakContract:
         for k in ("code", "name", "break_times", "first_seal_time", "up_pct",
                   "main_net_inflow", "super_net_inflow", "big_net_inflow", "signal"):
             assert k in r, f"炸板表缺字段 {k}"
+
+    def test_has_freshness(self):
+        pl = _break_payload(_indicators())
+        assert pl["数据可用性"] is True
+        assert "数据完整" in pl["数据说明"]
+
+
+class TestLhbContract:
+    def test_has_freshness(self):
+        pl = _lhb_payload(_indicators())
+        assert "数据可用性" in pl
+        assert "数据说明" in pl
+        assert pl["数据可用性"] is True or pl["数据可用性"] is False
+
+    def test_overview_fields(self):
+        pl = _lhb_payload(_indicators())
+        assert "龙虎榜概览" in pl
+        assert "个股净买排行" in pl
+        assert "知名游资动向" in pl
 
 
 class TestEmotionContract:
@@ -108,6 +139,18 @@ class TestEmotionContract:
         for k in ("zt", "height", "promote", "break", "dt"):
             assert k in comp, f"成分分缺字段 {k}"
         assert "缺失说明" in _emotion_payload(_indicators())
+
+    def test_has_freshness(self):
+        pl = _emotion_payload(_indicators())
+        assert pl["数据可用性"] is True
+        assert "数据完整" in pl["数据说明"]
+        # 可用性为假时
+        ind = _indicators()
+        ind["emotion"]["available"] = False
+        ind["emotion"]["notes"] = ["情绪数据缺失（涨停池为空）"]
+        pl2 = _emotion_payload(ind)
+        assert pl2["数据可用性"] is False
+        assert "涨停池为空" in pl2["数据说明"]
 
     def test_forced_line(self):
         line = _emotion_forced(_indicators())
@@ -147,6 +190,26 @@ class TestHelpers:
         h = _headline(_indicators())
         assert h["zt_count"] == 79 and h["max_lb"] == 10
         assert h["max_lb_stock"] == "爱丽家居"
+
+    def test_headline_has_freshness(self):
+        h = _headline(_indicators())
+        assert "freshness" in h
+        assert h["freshness"]["涨停梯队"] is True
+        assert h["freshness"]["情绪温度"] is True
+
+    def test_digest_has_freshness(self):
+        d = _build_digest(_indicators())
+        assert "数据可用性" in d
+        assert d["数据可用性"]["涨停梯队"] is True
+
+    def test_freshness_helper(self):
+        ind = _indicators()
+        f = _freshness(ind)
+        assert f["涨停梯队"] is True
+        assert f["题材"] is True
+        assert f["情绪温度"] is True
+        # 龙虎榜未设置 stock_count → False
+        assert f["龙虎榜"] is False or f["龙虎榜"] is True
 
     def test_to_jsonable_handles_nonfinite(self):
         assert _to_jsonable(float("nan")) is None

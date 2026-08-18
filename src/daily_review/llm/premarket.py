@@ -71,6 +71,12 @@ def _overnight_digest(indicators: dict) -> dict:
     themes = indicators.get("themes", [])[:5]
     return {
         "trade_date": ladder.get("trade_date", ""),
+        "数据可用性": {
+            "涨停梯队": ladder.get("zt_count", 0) > 0,
+            "题材": bool(themes),
+            "情绪温度": emo.get("available", False),
+            "说明": "true=有数据 / false=数据缺失",
+        },
         "核心数据": {
             "zt_count": ladder.get("zt_count", 0),
             "lianban_count": ladder.get("lianban_count", 0),
@@ -186,6 +192,11 @@ def _open_strategy_digest(indicators: dict) -> dict:
     emo = indicators.get("emotion") or {}
     return {
         "trade_date": ladder.get("trade_date", ""),
+        "数据可用性": {
+            "涨停梯队": ladder.get("zt_count", 0) > 0,
+            "情绪温度": emo.get("available", False),
+            "说明": "true=有数据 / false=数据缺失",
+        },
         "核心数据": {
             "zt_count": ladder.get("zt_count", 0),
             "lianban_count": ladder.get("lianban_count", 0),
