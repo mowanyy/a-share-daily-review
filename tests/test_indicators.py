@@ -5,7 +5,8 @@ from __future__ import annotations
 import pandas as pd
 
 from daily_review.analysis.break_flow import analyze_break
-from daily_review.analysis.ladder import compute_ladder, compute_promotion
+from daily_review.analysis.ladder import (_compute_height_position, compute_ladder,
+                                            compute_promotion)
 from daily_review.analysis.theme import build_themes
 
 ZT_COLS = [
@@ -87,6 +88,93 @@ class TestLadder:
         # 弱封标记：open_times>=3 的二板B 应被标记
         weak2 = [w for layer in res["ladder"] if layer["height"] == 2 for w in layer["weak"]]
         assert any("600003" in w for w in weak2)
+
+    def test_height_position_high(self):
+        """当前空间板高度处于历史高位。"""
+        series = [{"date": "20260806", "max_lb": 5}, {"date": "20260805", "max_lb": 3},
+                  {"date": "20260804", "max_lb": 2}]
+        pos = _compute_height_position(series)
+        assert pos["current"] == 5
+        assert pos["max"] == 5
+        assert pos["min"] == 2
+        assert pos["label"] == "高位"
+        assert pos["percentile"] >= 0.7
+        assert pos["trend"] == "上升"  # 5 > 3
+        assert "mean" not in pos
+
+    def test_height_position_low(self):
+        """当前空间板高度处于历史低位。"""
+        series = [{"date": "20260806", "max_lb": 2}, {"date": "20260805", "max_lb": 5},
+                  {"date": "20260804", "max_lb": 4}]
+        pos = _compute_height_position(series)
+        assert pos["current"] == 2
+        assert pos["label"] == "低位"
+        assert pos["percentile"] <= 0.3
+        assert pos["trend"] == "下降"  # 2 < 5
+        assert "mean" not in pos
+
+    def test_height_position_mid(self):
+        """当前空间板高度处于历史中位。"""
+        series = [{"date": "20260806", "max_lb": 4}, {"date": "20260805", "max_lb": 5},
+                  {"date": "20260804", "max_lb": 3}]
+        pos = _compute_height_position(series)
+        assert pos["current"] == 4
+        assert pos["label"] == "中位"
+        assert pos["trend"] == "下降"  # 4 < 5
+        assert "mean" not in pos
+
+    def test_height_position_single_day(self):
+        """仅1日数据时标签为仅1日。"""
+        series = [{"date": "20260806", "max_lb": 3}]
+        pos = _compute_height_position(series)
+        assert pos["label"] == "仅1日"
+        assert pos["current"] == 3
+        assert pos["trend"] == "持平"  # 仅1日，与自身比较
+        assert "mean" not in pos
+
+    def test_height_position_all_same(self):
+        """所有值相同时标签为中位。"""
+        series = [{"date": "20260806", "max_lb": 4}, {"date": "20260805", "max_lb": 4},
+                  {"date": "20260804", "max_lb": 4}]
+        pos = _compute_height_position(series)
+        assert pos["label"] == "中位"
+        assert pos["min"] == pos["max"] == 4
+        assert pos["trend"] == "持平"  # 4 == 4
+        assert "mean" not in pos
+
+    def test_height_position_in_ladder_output(self):
+        """compute_ladder 返回的 height_position 字段包含正确标签。"""
+        zt = _mkzt([
+            {"code": "600001", "name": "最高股", "lb_num": 5, "first_limit_time": "09:30"},
+        ])
+        zb = _mkzb([])
+        height = [{"date": "20260806", "max_lb": 5}, {"date": "20260805", "max_lb": 3},
+                  {"date": "20260804", "max_lb": 2}]
+        res = compute_ladder(zt, zb, _mkzt([], date="20260805"), height)
+        assert "height_position" in res
+        assert res["height_position"]["label"] == "高位"
+        assert res["height_position"]["current"] == 5
+        assert res["height_position"]["trend"] == "上升"
+        assert "mean" not in res["height_position"]
+
+    def test_height_position_with_long_series(self):
+        """传入长序列时，height_position 基于长序列计算。"""
+        zt = _mkzt([
+            {"code": "600001", "name": "最高股", "lb_num": 4, "first_limit_time": "09:30"},
+        ])
+        zb = _mkzb([])
+        height = [{"date": "20260806", "max_lb": 4}]  # 短序列仅1日
+        # 长序列 20 天，当前 4 板在序列中偏低
+        long_series = [{"date": f"202608{d:02d}", "max_lb": (6 if d % 3 == 0 else 5) if d < 15 else 4}
+                       for d in range(20, 0, -1)]
+        long_series[0] = {"date": "20260806", "max_lb": 4}  # 今日=4板
+        res = compute_ladder(zt, zb, _mkzt([], date="20260805"), height,
+                             long_height_series=long_series)
+        assert "height_position" in res
+        # 基于长序列（非仅1日），应能判断位置
+        assert res["height_position"]["label"] != "仅1日"
+        assert res["height_position"]["current"] == 4
+        assert "mean" not in res["height_position"]
 
 
 class TestTheme:

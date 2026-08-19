@@ -105,7 +105,14 @@ def _overnight_digest(indicators: dict) -> dict:
 
 
 def _overnight_user(indicators: dict, news_list: list[dict], trade_date: str) -> str:
-    """隔夜预案 user 消息。"""
+    """隔夜预案 user 消息。
+
+    消息数超过 30 条时只保留前 30 条（最新在前），避免输入过长消耗推理模型预算。
+    """
+    items = news_list or []
+    truncated = len(items) > 30
+    if truncated:
+        items = items[:30]
     news_text = json.dumps(
         [
             {
@@ -114,15 +121,16 @@ def _overnight_user(indicators: dict, news_list: list[dict], trade_date: str) ->
                 "show_time": n.get("show_time", ""),
                 "source": n.get("source", ""),
             }
-            for n in (news_list or [])
+            for n in items
         ],
         ensure_ascii=False,
         indent=1,
     )
+    count_note = f"（共{len(news_list)}条，已截取前30条）" if truncated else f"（共{len(news_list)}条）"
     return (
         f"今日日期：{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}（{_weekday_cn(trade_date)}）\n"
         f"昨日复盘核心数据（JSON）：\n```json\n{_compact_json(_overnight_digest(indicators))}\n```\n\n"
-        f"隔夜消息（东财7x24快讯，昨日18:00至今早9:00，共{len(news_list)}条）：\n"
+        f"隔夜消息（东财7x24快讯，昨日18:00至今早9:00）{count_note}：\n"
         f"```json\n{news_text}\n```\n\n"
         "请输出「隔夜预案」：消息面汇总 → 消息-题材联动分析 → 今日关注方向。"
         "只输出正文，不要标题、不要编造数字。"
@@ -172,7 +180,7 @@ def generate_overnight_plan(
         {"role": "user", "content": _overnight_user(indicators, news_list, trade_date)},
     ]
     try:
-        body = chat(messages, api_key=api_key, max_tokens=4000)  # 推理模型预留 reasoning 预算
+        body = chat(messages, api_key=api_key, max_tokens=8000)  # 推理模型预留 reasoning 预算（v0.29 从 4000 上调，防截断）
     except LLMError as exc:
         body = f"（隔夜预案 LLM 生成失败：{exc}）\n\n{_overnight_fallback(news_list)}"
 

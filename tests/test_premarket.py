@@ -36,7 +36,7 @@ def _minimal_indicators() -> dict:
 
 
 def test_overnight_plan_max_tokens_budget(monkeypatch, tmp_path):
-    """隔夜预案 LLM 调用 max_tokens ≥ 4000（推理模型思考预留）。"""
+    """隔夜预案 LLM 调用 max_tokens ≥ 8000（推理模型思考预留，v0.29 上调防截断）。"""
     from daily_review.llm.premarket import generate_overnight_plan
 
     calls = _patch_chat(monkeypatch)
@@ -45,7 +45,7 @@ def test_overnight_plan_max_tokens_budget(monkeypatch, tmp_path):
     md = generate_overnight_plan(_minimal_indicators(), news, "20260817", out_path=out)
     assert out.exists() and "隔夜预案" in md
     assert calls, "chat 未被调用"
-    assert calls[0]["max_tokens"] >= 4000, f"max_tokens={calls[0]['max_tokens']}，推理模型思考会占满预算"
+    assert calls[0]["max_tokens"] >= 8000, f"max_tokens={calls[0]['max_tokens']}，推理模型思考会占满预算"
 
 
 def test_open_strategy_max_tokens_budget(monkeypatch, tmp_path):
@@ -79,6 +79,22 @@ def test_overnight_plan_llm_failure_falls_back(monkeypatch, tmp_path):
     assert "LLM 生成失败" in md
     assert "标题A" in md and "标题B" in md  # 兜底含原始快讯
     assert out.exists()
+
+
+def test_overnight_news_truncated_to_30(monkeypatch, tmp_path):
+    """消息数超过 30 条时截断，user 消息含截断提示。"""
+    from daily_review.llm.premarket import generate_overnight_plan, _overnight_user
+
+    calls = _patch_chat(monkeypatch)
+    news = [{"title": f"t{i}", "content": "c", "show_time": "2026-08-17 08:00:00", "source": "东财"} for i in range(50)]
+    _overnight_user(_minimal_indicators(), news, "20260817")  # 仅验证不报错
+    out = tmp_path / "plan.md"
+    md = generate_overnight_plan(_minimal_indicators(), news, "20260817", out_path=out)
+    assert out.exists() and "隔夜预案" in md
+    assert calls, "chat 未被调用"
+    # 验证 user 消息中的消息数标注
+    user_msg = calls[0]["messages"][1]["content"]
+    assert "50条" in user_msg and "已截取" in user_msg, f"截断提示缺失: {user_msg[:200]}"
 
 
 # ---------------------------------------------------------------- digest 新鲜度（v0.24 B1）

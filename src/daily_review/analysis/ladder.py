@@ -13,6 +13,62 @@ WEAK_OPEN_TIMES = 3
 WEAK_SEAL_AMOUNT = 50_000_000  # 封单 < 5000 万视为薄弱
 
 
+def _compute_height_position(height_series: list[dict]) -> dict:
+    """分析空间板高度在历史序列中的位置。
+
+    height_series: 近 N 日（含今日）空间板高度序列，最新日期在前。
+    返回：
+        { "current": int, "max": int, "min": int,
+          "percentile": float, "label": "高位"|"中位"|"低位"|"仅1日",
+          "trend": "上升"|"下降"|"持平" }
+    - 仅 1 个数据点（只有今日，无历史）：返回 "仅1日" 标签
+    - 所有值相同：返回 "中位" 标签
+    - trend 根据今日与昨日高度比较得出
+    """
+    if not height_series:
+        return {"current": 0, "max": 0, "min": 0, "percentile": 0.0, "label": "无数据", "trend": "持平"}
+    values = [s["max_lb"] for s in height_series]
+    current = values[0]  # 最新（今日）
+    max_val = max(values)
+    min_val = min(values)
+
+    # 趋势：今日 vs 昨日
+    yesterday = values[1] if len(values) > 1 else current
+    if current > yesterday:
+        trend = "上升"
+    elif current < yesterday:
+        trend = "下降"
+    else:
+        trend = "持平"
+
+    if len(values) == 1:
+        label = "仅1日"
+        pct = 0.5
+    elif max_val == min_val:
+        # 所有值相同 → 中位
+        label = "中位"
+        pct = 0.5
+    else:
+        # 百分位：当前值在序列中从小到大排的位置
+        sorted_vals = sorted(values)
+        rank = sorted_vals.index(current)
+        pct = rank / (len(sorted_vals) - 1)
+        if pct >= 0.7:
+            label = "高位"
+        elif pct <= 0.3:
+            label = "低位"
+        else:
+            label = "中位"
+    return {
+        "current": current,
+        "max": max_val,
+        "min": min_val,
+        "percentile": round(pct, 2),
+        "label": label,
+        "trend": trend,
+    }
+
+
 def _max_lb_stock(zt: pd.DataFrame) -> str:
     """空间板个股：取连板数最高的；并列时取封板最早的。"""
     if zt.empty:
@@ -72,11 +128,14 @@ def compute_ladder(
     zb: pd.DataFrame,
     prev_zt: pd.DataFrame,
     height_series: list[dict],
+    long_height_series: list[dict] | None = None,
 ) -> dict:
     """计算 LadderStats 指标与梯队表。
 
     height_series: 近 N 日（含今日）空间板高度序列，元素 `{"date": YYYYMMDD, "max_lb": int}`，
     最新日期在前。
+    long_height_series: 可选，更长窗口高度序列（如 20 个交易日），用于更稳健的位置统计。
+    若提供，则 height_position 基于此计算；否则回退到 height_series。
     """
     zt_count = len(zt)
     lianban_count = int((zt["lb_num"] >= 2).sum()) if zt_count else 0
@@ -87,6 +146,9 @@ def compute_ladder(
     promotion = compute_promotion(prev_zt, zt)
     ladder = _build_ladder_table(zt)
     first_board_count = int((zt["lb_num"] == 1).sum()) if zt_count else 0
+
+    # 长序列优先用于位置统计
+    hs = long_height_series if long_height_series is not None else height_series
 
     return {
         "trade_date": str(zt["trade_date"].iloc[0]) if zt_count else "",
@@ -100,4 +162,5 @@ def compute_ladder(
         "promotion": promotion,
         "ladder": ladder,
         "height_series": height_series,
+        "height_position": _compute_height_position(hs),
     }

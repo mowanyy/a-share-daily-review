@@ -19,6 +19,13 @@ jobs:
       - name: Install dependencies
         run: pip install pandas requests
 
+      - name: Cache data directory
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
       - name: Push open strategy
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}

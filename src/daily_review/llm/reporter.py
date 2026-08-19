@@ -68,7 +68,7 @@ def _compact_json(obj) -> str:
 def _ladder_payload(ind: dict) -> dict:
     stats = {k: ind.get(k) for k in (
         "zt_count", "lianban_count", "max_lb", "max_lb_stock",
-        "break_count", "break_rate", "promotion", "height_series",
+        "break_count", "break_rate", "promotion", "height_series", "height_position",
     )}
     pool = [
         {k: r.get(k) for k in ("code", "name", "lb_num", "first_limit_time", "open_times", "seal_amount", "industry", "concepts")}
