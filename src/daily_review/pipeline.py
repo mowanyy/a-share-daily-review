@@ -20,6 +20,8 @@ from daily_review.data.repo import load_csv, save_csv
 
 # 时间线长度（近 N 个交易日：今日 + N-1 天历史，供晋级率/题材时序/高度序列）
 TIMELINE_DAYS = 6
+# 空间板高度位置统计窗口：20 个交易日（约 1 个月），用于稳健的百分位+趋势分析
+HEIGHT_POSITION_WINDOW = 20
 # 概念标签最多取前 N 个板块（best-effort，仅当日）
 TOP_CONCEPT_BOARDS = 12
 
@@ -175,6 +177,24 @@ def _concept_boards_block(
     return df, ok
 
 
+def _build_long_height_series(trade_date: str) -> list[dict]:
+    """获取更长窗口的空间板高度序列，用于稳健的位置统计（约 20 个交易日）。
+
+    数据已按日缓存（_cached 复用 zt_pool），首次跑慢，后续复用缓存。
+    不影响主流程的 TIMELINE_DAYS=6（晋级率/情绪温度/题材时序仍用 6 天）。
+    """
+    today = datetime.now().strftime("%Y%m%d")
+    dates = em.resolve_recent_trade_dates(trade_date, n_days=HEIGHT_POSITION_WINDOW)
+    if trade_date not in dates:
+        dates = [trade_date] + dates
+    series = []
+    for d in dates:
+        pool = _cached("zt_pool", d, lambda d=d: em.fetch_zt_pool(d),
+                       use_cache=(d != today))
+        series.append({"date": d, "max_lb": int(pool["lb_num"].max()) if not pool.empty else 0})
+    return series
+
+
 def collect(trade_date: str, n_days: int = TIMELINE_DAYS) -> dict:
     """采集指定交易日全部输入数据（含时间线）。返回结构化 dict。
 
@@ -311,7 +331,14 @@ def compute(collected: dict) -> dict:
     concept_map = collected["concept_map"]
     moneyflow = collected["moneyflow"]
 
-    ladder = compute_ladder(zt, zb, prev_zt, collected["height_series"])
+    # 长窗口空间板高度序列（20 个交易日，用于稳健的位置统计）
+    # 失败时静默降级，不影响主流程
+    try:
+        long_height_series = _build_long_height_series(collected["trade_date"])
+    except Exception:
+        long_height_series = None
+    ladder = compute_ladder(zt, zb, prev_zt, collected["height_series"],
+                            long_height_series=long_height_series)
     themes = build_themes(zt, prev_pools, concept_map)
     break_res = analyze_break(zb, moneyflow, break_rate=ladder["break_rate"])
     lhb_res = analyze_lhb(
