@@ -269,6 +269,9 @@ def _open_strategy_user(
         f"```json\n{_compact_json(auction_data)}\n```\n\n"
         "请输出「开盘策略」：1 段竞价总览 → 有机会的个股清单 → 开盘执行提示。"
         "只输出正文，不要标题、不要编造数字、不要列无数据支撑的个股。"
+        "字段口径：auction_ratio=竞价量能比（竞价成交额÷昨日成交额，如 0.05 表示竞价成交额占昨日全天的 5%），"
+        "prev_seal=昨日封单金额（元）。个别字段缺失（null）时直接省略不写，不得标注「数据不足」刷屏；"
+        "仅当所有竞价数据整体缺失时才在竞价总览里一句话说明。"
         "昨日情绪温度及其历史序列必须逐字引用上方 JSON 数值（含日期），"
         "提及任一历史日期情绪温度只能引自该 JSON，禁止按记忆/推算改动或补数。"
     )
@@ -282,11 +285,14 @@ def _open_strategy_fallback(auction_data: list[dict]) -> str:
     for r in auction_data:
         pct = r.get("auction_pct")
         ratio = r.get("auction_ratio")
-        rows.append(
-            f"- {r.get('code', '')} {r.get('name', '')}："
-            f"竞价{'高开' if pct and pct > 0 else '低开'}{abs(pct or 0):.2f}% "
-            f"/ 量比{'×' if ratio else ''}{ratio if ratio else '缺'}"
-        )
+        seal = r.get("prev_seal")
+        parts = [f"{r.get('code', '')} {r.get('name', '')}："]
+        parts.append(f"竞价{'高开' if pct and pct > 0 else '低开'}{abs(pct or 0):.2f}%")
+        if ratio:
+            parts.append(f"竞价量能比{ratio:.2f}")
+        if seal:
+            parts.append(f"昨日封单{_fmt_money(seal)}")
+        rows.append(" / ".join(parts))
     return "竞价数据（LLM 生成失败，以下为原始数据表）：\n" + "\n".join(rows)
 
 
