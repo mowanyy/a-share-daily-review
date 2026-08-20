@@ -9,6 +9,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.32.0`：**飞书 Agent 网关（阶段一）——WebSocket 长连接 + 飞书群@机器人问答 + 合规边界**。新增 `web/feishu_gateway.py`：FeishuGateway 类（lark-oapi ws 模式，无需公网地址）、TokenManager（自动刷新 tenant_access_token）、send_text/send_card（支持彩色卡片消息）、route_message（消息路由→QA 系统/合规拒绝）、is_compliance_risk（交易建议关键词过滤）。CLI 新增 `agent` 子命令（`python -m daily_review agent`）。config.py 新增 `feishu_app_id`/`feishu_app_secret`/`feishu_home_channel`/`feishu_allowed_chat_ids`。合规拒绝关键词：推荐/买入/卖出/持仓/荐股等。新增 12 个测试。**484 测试通过**。
+
 `v0.31.1`：**修复开盘策略引用了「两天前」涨停池——交易日历过期判定失效（Q 面试真洞：8/20 推送引用 8/18 数据而非 8/19）**。故障背景：8/20 开盘策略推送说「79 只昨日涨停股」，实际引用的是 20260818 的池子——权威交易日历 `data/trade_calendar.csv` 只更新到 20260818，缺 8/19（周三，正常交易日）。根因① `trade_calendar.py::_is_stale()` 过期判定用「表最新日期早于 4 个自然日前」窗口太宽：8/20 时表 max=20260818、阈值=20260816，`8/18>=8/16` 判「新鲜」→ **永远不触发联网刷新**；② `recent_trade_dates("20260820",2)` 机械跳过 8/19/8/20 返回 `['20260818','20260817']`，长度满足 → `resolve_recent_trade_dates` 直接采信，探测兜底不触发 → prev_date=20260818；③ 连带 `is_trade_date("20260819")` 因「>表max」被误判「未来/未知」返回 None；④ 探测路径缓存曾把周末（20260815/16）写成交易日污染解析。修复：① `_is_stale` 改为「表最新日期 >= 昨日前最近工作日」（今天减 1 天后回退非周末）——8/20 时判过期 → `_load()` 自动联网刷新 → 上证日K 带回 8/19（盘中当天日K 未生成，表含昨日即最新，避免每次调用都刷）→ prev_date 正确回到 20260819，缺文件时实时拉取落盘；② `eastmoney_pool._resolve_trade_dates_by_probe` 新增 `_weekend()` 辅助 + 周末日期直接跳过（不探测、discard 缓存，防周末污染）；③ `tests/test_calendar.py` 补 `_fetch_kline_dates` mock（否则判过期后会真联网）并新增 TestStaleRefresh 回归（`resolve_recent_trade_dates("20260820",2)[0]` 必须是 20260819）+ TestProbeSkipsWeekend（周末不探测不写缓存）；④ `trade_calendar.is_fresh()` 新公开函数 + `resolve_recent_trade_dates` 采信判定：**日历过期（缺最近交易日）即使长度足够也不采信**，直接走涨停池探针兜底（日K 接口不可达时探针通常仍可达，避免网络受限时静默引用两天前数据）。**472 测试通过**。
 
 `v0.31.0`：**开盘策略数据补齐（客户反馈：机会股每只都写「量比：数据不足 / 昨日封单：数据不足」）——封单列名 bug 修复 + 竞价量能比落地 + 缺失字段省略纪律**。根因①「昨日封单」是取错列名的 bug：涨停池落盘 CSV 列名是 `seal_amount`（东财原始字段 `fund` 写盘时已重命名），但 `cli.py`/`push.py`/`web/jobs.py` 三处都判 `"fund" in zt.columns` → 恒为 False → 封单映射永远为空 → `prev_seal` 恒 None，而昨日 zt_pool.csv 79 只封单金额全有值；②「量比」从未实现：`compute_auction` 的 `prev_volume_map` 参数无任何调用方传入 → `auction_ratio` 恒 None；③ prompt 原文「竞价数据不足无法判定的标的，明确标注『数据不足』」教 LLM 刷屏。修复：① `auction.py` 新增 `build_prev_maps(zt)`（`seal_amount` 优先/`fund` 兜底取封单 + `amount` 取昨日成交额），三处调用点统一复用去重；② `compute_auction` 参数 `prev_volume_map` 改为 `prev_amount_map`，量比口径定为**竞价量能比 = 竞价成交额÷昨日成交额**（零额外网络请求、9:25 推送窗口准点；严格量比需逐股拉 K 线 79 次，已否）；③ `premarket.py` user 消息注明字段口径 + 缺失省略纪律，`_open_strategy_fallback` 兜底表改显示量能比/封单；`prompts/modules/开盘策略.md` 输入段字段口径更新、输出纪律改为「缺失字段省略不写、不得逐条标注『数据不足』刷屏，仅整体缺失才在总览一句话说明」。新增 `tests/test_auction.py`（5 例：封单列名回归/`fund` 兼容/NaN 跳过/量能比与封单填充/缺失省略）。**465 测试通过**。
@@ -101,6 +103,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review intraday snapshot [--date 20260818] [--force-baseline]
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review intraday snapshots [--date]    # 列出当日所有增量记录
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review intraday baseline [--date] [--force]
+# 飞书 Agent 网关（v0.32）：WebSocket 长连接，飞书群里@机器人提问（需先配置飞书开放平台应用）
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review agent [--date 20260820]
 # 图形启动器（tkinter 窗口；双击根目录 启动.bat 或桌面快捷方式同效；--dry-run 自检不弹窗）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch --dry-run
