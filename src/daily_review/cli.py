@@ -577,6 +577,16 @@ def _cmd_agent(args) -> None:
     def _qa_factory():
         return QASession(index, trade_date=trade_date, use_embedding=False)
 
+    # 初始化多轮对话记忆（v0.34）
+    from daily_review.web.chat_session import ChatSessionManager
+    chat_session_manager = ChatSessionManager()
+    print("[agent] 多轮对话记忆已就绪")
+
+    # 初始化 SQLite 审计日志（v0.34）
+    from daily_review.web.audit import AuditDB
+    audit_db = AuditDB()
+    print(f"[agent] 审计日志已就绪: {audit_db._db_path}")
+
     # 启动飞书网关
     print("[agent] 启动飞书 WebSocket 网关...")
 
@@ -589,6 +599,8 @@ def _cmd_agent(args) -> None:
         gateway = FeishuGateway.from_settings(
             qa_session_factory=_qa_factory,
             trade_date=trade_date,
+            chat_session_manager=chat_session_manager,
+            audit_db=audit_db,
         )
         if gateway is None:
             return 1
@@ -599,6 +611,7 @@ def _cmd_agent(args) -> None:
             home_channel=settings.feishu_home_channel,
             poll_interval=args.poll_interval,
             qa_session_factory=_qa_factory,
+            audit_db=audit_db,
         )
 
         # 将市场概况函数注入网关（支持"现在什么情况"快速通道）
@@ -614,10 +627,12 @@ def _cmd_agent(args) -> None:
             print(f"[agent] ❌ Daemon 异常: {exc}")
             return 1
     else:
-        # ---------- 纯网关模式（当前行为） ----------
+        # ---------- 纯网关模式（v0.34：多轮对话 + 审计日志） ----------
         gateway = FeishuGateway.from_settings(
             qa_session_factory=_qa_factory,
             trade_date=trade_date,
+            chat_session_manager=chat_session_manager,
+            audit_db=audit_db,
         )
         if gateway is None:
             return 1
