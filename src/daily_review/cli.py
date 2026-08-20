@@ -540,6 +540,61 @@ def _cmd_skill(args) -> None:
     return 0
 
 
+def _cmd_agent(args) -> None:
+    """飞书 Agent 网关：WebSocket 长连接，客户可以在群里@机器人提问。
+
+    需要先配置 .env 中的 FEISHU_APP_ID 和 FEISHU_APP_SECRET（飞书开放平台自定义应用）。
+    启动后保持运行，按 Ctrl+C 退出。
+    """
+    from daily_review.kb.index import KnowledgeIndex
+    from daily_review.kb.qa import QASession
+    from daily_review.web.feishu_gateway import FeishuGateway
+
+    settings = get_settings()
+    if not settings.feishu_app_id or not settings.feishu_app_secret:
+        print("[agent] ❌ 未配置飞书开放平台应用。请先在 .env 中设置:")
+        print("  FEISHU_APP_ID=你的AppID")
+        print("  FEISHU_APP_SECRET=你的AppSecret")
+        print("  FEISHU_HOME_CHANNEL=默认推送群chat_id（可选）")
+        print("  FEISHU_ALLOWED_CHAT_IDS=允许响应的群chat_id（可选，逗号分隔）")
+        return 1
+
+    trade_date = args.date or _probe_recent_date()
+    print(f"[agent] 交易日: {trade_date}")
+
+    # 初始化知识库
+    print("[agent] 初始化知识库...")
+    try:
+        index = KnowledgeIndex(use_embedding=False)
+        index.ensure_ready()
+        print(f"[agent] 知识库就绪: {len(index.chunks)} 个片段")
+    except Exception as exc:
+        print(f"[agent] 知识库初始化失败: {exc}（降级为简单问答）")
+        index = None
+
+    # 创建 QA 会话工厂
+    def _qa_factory():
+        return QASession(index, trade_date=trade_date, use_embedding=False)
+
+    # 启动飞书网关
+    print("[agent] 启动飞书 WebSocket 网关...")
+    gateway = FeishuGateway.from_settings(
+        qa_session_factory=_qa_factory,
+        trade_date=trade_date,
+    )
+    if gateway is None:
+        return 1
+
+    try:
+        gateway.start()
+    except KeyboardInterrupt:
+        print("\n[agent] 用户中断，退出")
+    except Exception as exc:
+        print(f"[agent] ❌ 网关异常: {exc}")
+        return 1
+    return 0
+
+
 def _cmd_web(args) -> None:
     from daily_review.web.app import create_app
 
@@ -797,6 +852,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_qa.add_argument("--no-embedding", action="store_true", help="禁用向量检索（纯关键词）")
     p_qa.add_argument("--with-reports", action="store_true", help="把 output/*_复盘.md 也纳入知识库")
     p_qa.set_defaults(func=_cmd_qa)
+
+    p_agent = sub.add_parser(
+        "agent",
+        help="飞书 Agent 网关：WebSocket 长连接，飞书群里@机器人提问（v0.32）",
+    )
+    p_agent.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
+    p_agent.set_defaults(func=_cmd_agent)
 
     p_web = sub.add_parser(
         "web",

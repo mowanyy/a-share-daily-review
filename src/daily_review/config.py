@@ -71,6 +71,17 @@ class Settings:
     feishu_webhook_url: str = field(default_factory=lambda: os.getenv("FEISHU_WEBHOOK_URL", ""))
     feishu_secret: str = field(default_factory=lambda: os.getenv("FEISHU_SECRET", ""))
 
+    # 飞书开放平台应用（v0.32 Agent 化）：WebSocket 长连接，双向交互。
+    # 用于飞书群@机器人问答、卡片消息推送。需要先在 open.feishu.cn 创建企业自建应用。
+    # FEISHU_APP_ID / FEISHU_APP_SECRET 必填；FEISHU_HOME_CHANNEL 为默认推送群 chat_id；
+    # FEISHU_ALLOWED_CHAT_IDS 为逗号分隔的允许机器人响应的群 chat_id 列表（空=全部响应）。
+    feishu_app_id: str = field(default_factory=lambda: os.getenv("FEISHU_APP_ID", ""))
+    feishu_app_secret: str = field(default_factory=lambda: os.getenv("FEISHU_APP_SECRET", ""))
+    feishu_home_channel: str = field(default_factory=lambda: os.getenv("FEISHU_HOME_CHANNEL", ""))
+    feishu_allowed_chat_ids: list[str] = field(default_factory=lambda: [
+        c.strip() for c in os.getenv("FEISHU_ALLOWED_CHAT_IDS", "").split(",") if c.strip()
+    ])
+
 
 def get_settings() -> Settings:
     """返回单例配置。"""
