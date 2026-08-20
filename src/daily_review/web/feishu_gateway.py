@@ -218,19 +218,23 @@ def route_message(
     text: str,
     qa_session_factory: Callable | None = None,
     trade_date: str | None = None,
+    market_summary_fn: Callable[[], str] | None = None,
 ) -> str:
     """路由用户消息到合适的处理模块。
 
     优先级：
     1. 合规检查 → 拒绝
-    2. QA 会话（如果可用）→ 调用 QA 回答
-    3. 数据查询 → 直接回答（简单匹配）
-    4. 兜底 → 引导
+    2. 盘中实时概况（如果配置了 market_summary_fn）→ 快速返回，不经过 RAG
+    3. QA 会话（如果可用）→ 调用 QA 回答
+    4. 数据查询 → 直接回答（简单匹配）
+    5. 兜底 → 引导
 
     Args:
         text: 用户消息文本
         qa_session_factory: QA 会话工厂函数（无参，返回 QASession 实例）
         trade_date: 交易日
+        market_summary_fn: 市场概况函数（无参，返回格式化的概况文本），
+                           用于"现在什么情况"快速通道
 
     Returns:
         回复文本
@@ -242,6 +246,18 @@ def route_message(
     # 1. 合规检查
     if is_compliance_risk(text):
         return COMPLIANCE_REPLY
+
+    # 1.5 盘中实时概况快速通道（v0.33）：不经过 RAG 检索，<1s 响应
+    if market_summary_fn is not None:
+        text_lower_for_check = text.lower()
+        realtime_keywords = ["现在", "实时", "当前", "什么情况", "市场概况", "怎么样"]
+        if any(kw in text_lower_for_check for kw in realtime_keywords):
+            try:
+                result = market_summary_fn()
+                if result:
+                    return result
+            except Exception as exc:
+                logger.warning("市场概况获取失败: %s", exc)
 
     # 2. QA 会话（RAG + 数据工具 function-calling），带超时保护
     if qa_session_factory is not None:
@@ -284,6 +300,7 @@ def _handle_p2_im_message_receive(
     token_manager: TokenManager,
     qa_session_factory: Callable | None = None,
     trade_date: str | None = None,
+    market_summary_fn: Callable[[], str] | None = None,
 ):
     """创建 P2ImMessageReceiveV1 事件处理器。
 
@@ -334,8 +351,13 @@ def _handle_p2_im_message_receive(
 
             logger.info("收到飞书消息: %s（群: %s）", text[:50], chat_id)
 
-            # 路由消息
-            reply = route_message(text, qa_session_factory, trade_date)
+            # 路由消息（v0.33：传入 market_summary_fn 支持盘中实时查询快速通道）
+            reply = route_message(
+                text,
+                qa_session_factory,
+                trade_date,
+                market_summary_fn=market_summary_fn,
+            )
 
             # 发送回复
             send_text(token_manager, chat_id, reply)
@@ -368,6 +390,7 @@ class FeishuGateway:
         qa_session_factory: Callable | None = None,
         trade_date: str | None = None,
         log_level: int = logging.INFO,
+        market_summary_fn: Callable[[], str] | None = None,
     ):
         self._app_id = app_id
         self._app_secret = app_secret
@@ -376,6 +399,7 @@ class FeishuGateway:
         self._log_level = log_level
         self._token_manager = TokenManager(app_id, app_secret)
         self._ws_client = None
+        self._market_summary_fn = market_summary_fn
 
     @property
     def token_manager(self) -> TokenManager:
@@ -387,6 +411,7 @@ class FeishuGateway:
         *,
         qa_session_factory: Callable | None = None,
         trade_date: str | None = None,
+        market_summary_fn: Callable[[], str] | None = None,
     ) -> FeishuGateway | None:
         """从 Settings 配置创建网关（未配置时返回 None）。"""
         settings = get_settings()
@@ -398,6 +423,7 @@ class FeishuGateway:
             app_secret=settings.feishu_app_secret,
             qa_session_factory=qa_session_factory,
             trade_date=trade_date,
+            market_summary_fn=market_summary_fn,
         )
 
     def start(self) -> None:
@@ -410,11 +436,12 @@ class FeishuGateway:
         from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
         from lark_oapi.ws import Client as WSClient
 
-        # 构建事件处理器
+        # 构建事件处理器（v0.33：传入 market_summary_fn 支持盘中实时查询快速通道）
         handler = _handle_p2_im_message_receive(
             self._token_manager,
             qa_session_factory=self._qa_session_factory,
             trade_date=self._trade_date,
+            market_summary_fn=self._market_summary_fn,
         )
 
         event_handler = (

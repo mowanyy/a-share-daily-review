@@ -114,3 +114,67 @@ def test_token_manager_no_network():
     tm = TokenManager("invalid_id", "invalid_secret")
     token = tm.token  # 触发 _refresh，但会失败
     assert token == ""  # 失败时保持空 token
+
+
+# ---------- 盘中实时查询快速通道（v0.33） ----------
+
+
+def test_realtime_query_uses_market_summary_fn():
+    """"现在什么情况"应走快速通道返回市场概况。"""
+    reply = route_message(
+        "现在什么情况",
+        market_summary_fn=lambda: "📊 盘中实时概况（10:30）\n涨停 35 家 | 炸板 8 家",
+    )
+    assert "盘中实时概况" in reply
+    assert "35" in reply
+
+
+def test_realtime_query_keywords():
+    """多个关键词均应触发快速通道。"""
+    for kw in ["现在", "实时", "当前", "市场概况", "怎么样"]:
+        reply = route_message(
+            kw,
+            market_summary_fn=lambda: f"快速通道响应: {kw}",
+        )
+        assert "快速通道响应" in reply
+
+
+def test_realtime_query_fallback_when_empty():
+    """快速通道返回空字符串时应降级。"""
+    reply = route_message(
+        "现在什么情况",
+        market_summary_fn=lambda: "",
+    )
+    # 降级到兜底回复
+    assert "暂时无法" in reply
+
+
+def test_realtime_query_fallback_on_exception():
+    """快速通道异常时应降级，不崩溃。"""
+    def _broken_fn():
+        raise RuntimeError("模拟异常")
+
+    reply = route_message(
+        "现在什么情况",
+        market_summary_fn=_broken_fn,
+    )
+    # 异常后降级到兜底
+    assert "暂时无法" in reply
+
+
+def test_realtime_query_without_fn_uses_normal_route():
+    """未配置 market_summary_fn 时走正常路由（不触发快速通道）。"""
+    reply = route_message("现在什么情况")
+    # 无 market_summary_fn 时，"现在什么情况"不是合规风险，也不是问候/帮助
+    # 应走兜底
+    assert "暂时无法" in reply
+
+
+def test_realtime_query_does_not_affect_compliance():
+    """合规风险不受快速通道影响。"""
+    reply = route_message(
+        "推荐一只股票",
+        market_summary_fn=lambda: "📊 盘中实时概况",
+    )
+    # 合规优先，不应走快速通道
+    assert "无法给出" in reply
