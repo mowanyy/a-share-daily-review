@@ -8,6 +8,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.30.0`：**跨消息数值一致性（预案/复盘不再自相矛盾）——复盘指标快照 + 历史锚点 + 引用纪律**。故障背景：8/18 晚推送说情绪温度 74、8/19 预案却引用 58.4——预案「昨日情绪温度」此前每次生成都从 `data/{date}/*.csv` 重算（代码版本/数据补齐/缺失维度重归一都会让同一历史日期算出差值，实测 8/11 曾算 59、后算 66），且生成时从不读历史预案文本，矛盾无法自查。① 新增 `analysis/review_snapshot.py`：完整复盘落盘权威快照 `data/review_snapshots/{date}.json`（cli/jobs/push 三个 review 分支 hook；plan/open 不写，防重算覆盖权威值），「昨日情绪温度」读取改为**快照优先**。② `llm/premarket.py` digest 情绪温度块新增 `历史序列(旧→新)` 与 `来源`（快照/重算）标注，user 消息加「昨日情绪温度及历史序列必须逐字引用 JSON 数值、禁止按记忆/推算改动」纪律；`llm/reporter.py` `_emotion_payload` 前日快照缺失时追加缺失说明。prompts 三处（隔夜预案/开盘策略/情绪温度）输入段与输出纪律同步。③ 快照缺失时预案 digest 标「数据重算（昨日复盘快照缺失）」、复盘缺失说明提示，禁止 LLM 编造昨日值。**460 测试通过**。
+
 `v0.28.0`：**D2 盘中情绪进度归一化（Q16 面试洞）——盘中情绪温度不再仅加 notes，按时间进度归一化 + EWMA 平滑**。新增 `_intraday_progress`（经验曲线 09:30→0.05→10:00→0.50→14:57→0.98）、`_normalize_intraday`（zt_count/dt_count 按进度放大）、`_ewma_smooth`（alpha=0.3+0.5*progress 动态加权）。`compute_emotion(is_intraday=True)` 时，先用归一化 raw 重计分，再对前日收盘分做 EWMA 平滑，使早盘分数更接近收盘最终值。**439 测试通过**。
 
 `v0.27.0`：**D1 盘中增量监控（Q15 面试洞）——早盘基准快照 + 盘中增量 diff + 时间轴累计曲线**。新增 `analysis/intraday.py`：`take_baseline`（基准落盘）、`snapshot`（当前快照与基准 diff）、`diff` 纯函数（新涨停/炸板/回封）、`load_snapshots`（累计曲线）。数据存 `data/intraday/{date}/`（与收盘缓存隔离）。CLI 新增 `intraday` 子命令（`baseline`/`snapshot`/`snapshots`，缺省=summary）。**431 测试通过**。

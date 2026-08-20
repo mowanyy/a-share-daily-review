@@ -156,6 +156,10 @@ def _cmd_review(args) -> None:
         print(f"[review] 采集或指标计算失败：{type(exc).__name__}: {exc}")
         print("（请检查网络是否可达东方财富接口；已有本地数据时可加 --no-llm 仅跑指标）")
         return 1
+    # v0.30：完整复盘落盘权威快照（预案/开盘策略引用昨日值不再重算漂移）
+    from daily_review.analysis.review_snapshot import save_review_snapshot
+
+    save_review_snapshot(indicators, trade_date)
     _print_summary(indicators)
 
     if args.no_llm:

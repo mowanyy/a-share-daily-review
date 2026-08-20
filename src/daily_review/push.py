@@ -164,6 +164,10 @@ def generate(report_type: str, date: str) -> str:
         indicators = compute(collected)
         if not _has_data(indicators):
             raise NoDataError(f"{date} 无涨停数据（{_no_data_reason(date)}）")
+        # v0.30：完整复盘落盘权威快照（预案/开盘策略引用昨日值不再重算漂移）
+        from daily_review.analysis.review_snapshot import save_review_snapshot
+
+        save_review_snapshot(indicators, date)
         return generate_report(indicators, date)
 
     # plan / open：数据基准是前一交易日

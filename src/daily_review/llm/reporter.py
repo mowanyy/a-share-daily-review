@@ -142,7 +142,15 @@ def _lhb_payload(ind: dict) -> dict:
 def _emotion_payload(ind: dict) -> dict:
     """情绪温度载荷（对齐 module.emotion 输入契约）。"""
     emo = ind.get("emotion") or {}
-    notes = emo.get("notes", [])
+    notes = list(emo.get("notes", []))
+    # v0.30 ③：前一日完整复盘快照缺失 → 明示对比来源，防 LLM 对「较昨日」自由发挥后无对证
+    dates = ind.get("timeline_dates") or []
+    prev_date = dates[1] if len(dates) > 1 else None
+    if prev_date:
+        from daily_review.analysis.review_snapshot import load_review_snapshot
+
+        if load_review_snapshot(prev_date) is None:
+            notes.append(f"昨日复盘快照缺失（{prev_date}），'较昨日'对比基于数据重算")
     return {
         "数据可用性": emo.get("available", False),
         "数据说明": notes[0] if notes else "数据完整",
