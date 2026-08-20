@@ -188,7 +188,7 @@ def generate(report_type: str, date: str) -> str:
         return generate_overnight_plan(indicators, news, date)
 
     # open
-    from daily_review.analysis.auction import compute_auction, fetch_auction_data
+    from daily_review.analysis.auction import build_prev_maps, compute_auction, fetch_auction_data
     from daily_review.llm.premarket import generate_open_strategy
 
     if not _has_data(indicators):
@@ -205,15 +205,10 @@ def generate(report_type: str, date: str) -> str:
         codes = [str(c) for c in zt["code"]]
         try:
             quotes = fetch_auction_data(codes)
-            prev_seal_map = {}
-            if "fund" in zt.columns:
-                import pandas as pd
-
-                for _, r in zt.iterrows():
-                    fund = r.get("fund")
-                    if fund is not None and pd.notna(fund):
-                        prev_seal_map[str(r["code"])] = float(fund)
-            auction_data = compute_auction(quotes, prev_seal_map=prev_seal_map)
+            prev_seal_map, prev_amount_map = build_prev_maps(zt)
+            auction_data = compute_auction(
+                quotes, prev_seal_map=prev_seal_map, prev_amount_map=prev_amount_map
+            )
         except Exception:
             auction_data = []
     # 开盘策略依赖竞价数据；无竞价数据（休市/未开盘）→ 跳过

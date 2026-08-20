@@ -240,7 +240,7 @@ def _cmd_plan(args) -> None:
 
 def _cmd_open(args) -> None:
     """开盘策略（9:25-9:30 运行）：基于竞价数据 + 隔夜预案。"""
-    from daily_review.analysis.auction import compute_auction, fetch_auction_data
+    from daily_review.analysis.auction import build_prev_maps, compute_auction, fetch_auction_data
     from daily_review.llm.client import LLMError
     from daily_review.llm.premarket import generate_open_strategy
     from daily_review.pipeline import collect, compute
@@ -280,16 +280,11 @@ def _cmd_open(args) -> None:
         print(f"\n[open] 采集竞价数据（{len(codes)} 只涨停股）...")
         try:
             quotes = fetch_auction_data(codes)
-            # 昨日封单映射
-            prev_seal_map = {}
-            if "fund" in zt.columns:
-                import pandas as pd
-                for _, r in zt.iterrows():
-                    code = str(r["code"])
-                    fund = r.get("fund")
-                    if fund is not None and pd.notna(fund):
-                        prev_seal_map[code] = float(fund)
-            auction_data = compute_auction(quotes, prev_seal_map=prev_seal_map)
+            # 昨日封单/成交额映射（v0.31：读 seal_amount 列，修复 fund 列名取不到 bug）
+            prev_seal_map, prev_amount_map = build_prev_maps(zt)
+            auction_data = compute_auction(
+                quotes, prev_seal_map=prev_seal_map, prev_amount_map=prev_amount_map
+            )
             ready = [r for r in auction_data if r.get("auction_pct") is not None]
             print(f"  竞价数据 {len(auction_data)} 条（有竞价价 {len(ready)} 只）")
         except Exception as exc:

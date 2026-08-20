@@ -264,9 +264,7 @@ class JobManager:
 
     def _run_open(self, job: JobState, md_to_html) -> None:
         """开盘策略：collect prev → auction → generate_open_strategy → 渲染。"""
-        import pandas as pd
-
-        from daily_review.analysis.auction import compute_auction, fetch_auction_data
+        from daily_review.analysis.auction import build_prev_maps, compute_auction, fetch_auction_data
         from daily_review.config import get_settings
         from daily_review.llm.premarket import generate_open_strategy
         from daily_review.pipeline import collect, compute
@@ -298,14 +296,10 @@ class JobManager:
             codes = [str(c) for c in zt["code"]]
             job.logs.append(f"竞价采集 {len(codes)} 只涨停股")
             quotes = fetch_auction_data(codes)
-            prev_seal_map = {}
-            if "fund" in zt.columns:
-                for _, r in zt.iterrows():
-                    code = str(r["code"])
-                    fund = r.get("fund")
-                    if fund is not None and pd.notna(fund):
-                        prev_seal_map[code] = float(fund)
-            auction_data = compute_auction(quotes, prev_seal_map=prev_seal_map)
+            prev_seal_map, prev_amount_map = build_prev_maps(zt)
+            auction_data = compute_auction(
+                quotes, prev_seal_map=prev_seal_map, prev_amount_map=prev_amount_map
+            )
             ready = [r for r in auction_data if r.get("auction_pct") is not None]
             job.logs.append(f"竞价数据 {len(auction_data)} 条（有竞价价 {len(ready)} 只）")
         else:
