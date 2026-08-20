@@ -96,8 +96,8 @@ def refresh() -> set[str]:
 def _load() -> set[str]:
     """读表；无表或表过期（缺最近交易日）→ 联网补拉一次；失败保留旧表（stale 但比空好）。
 
-    表过期判定：A 股最多周末休 2 天，表最新日期若早于 4 个自然日前（如长假的周一
-    后首日）说明缺最近行情 → 需要刷新；否则视为有效。
+    表过期判定：表最新交易日应覆盖到「今天（或昨天，盘中当天日K 未生成）」——
+    若最新日期早于最近一个工作日，说明缺最近行情 → 需要刷新。
     """
     global _TABLE
     if _TABLE is not None:
@@ -120,15 +120,38 @@ def _load() -> set[str]:
 
 
 def _is_stale(dates: set[str]) -> bool:
-    """表是否缺最近交易日（需要刷新）：最新日期早于 4 个自然日前 → 过期。"""
+    """表是否缺最近交易日（需要刷新）：最新日期早于「昨日前最近工作日」→ 过期。
+
+    v0.31.1：原判定「早于 4 自然日前」窗口太宽——8/20 时表只到 8/18（缺 8/19 交易日）
+    仍判「新鲜」，导致开盘策略 prev 日期误用两天前数据。改为：表最新日期必须 >=
+    「今天减 1 天后最近的非周末日」（= 开盘策略所需的前一交易日）。盘中当天日K
+    未生成，表只需覆盖昨日即视为最新，避免每次调用都联网刷新。
+    """
     if not dates:
         return True
-    threshold = (_dt.datetime.now().date() - _dt.timedelta(days=4)).strftime("%Y%m%d")
-    return max(dates) < threshold
+    today = _dt.datetime.now().date()
+    prev_workday = today - _dt.timedelta(days=1)
+    while prev_workday.weekday() >= 5:  # 昨天是周六/周日 → 回退到周五
+        prev_workday -= _dt.timedelta(days=1)
+    return max(dates) < prev_workday.strftime("%Y%m%d")
 
 
 def _max_date(dates: set[str]) -> str:
     return max(dates) if dates else ""
+
+
+def is_fresh() -> bool:
+    """表是否可信（未过期）：存在且最新日期覆盖到最近工作日 → 可信。
+
+    供 resolve_recent_trade_dates 采信判定：日历刷新失败（日K 接口不可用）时
+    表可能仍能凑够 n_days 个历史日期，但缺最近交易日会给出错误 prev——
+    此时必须判定不可信、走涨停池探测兜底（探针接口通常仍可达）。
+    """
+    try:
+        dates = _read_file()
+    except OSError:
+        dates = set()
+    return bool(dates) and not _is_stale(dates)
 
 
 # ---------------------------------------------------------------- 查询
