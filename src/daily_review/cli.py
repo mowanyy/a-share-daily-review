@@ -545,6 +545,7 @@ def _cmd_agent(args) -> None:
 
     需要先配置 .env 中的 FEISHU_APP_ID 和 FEISHU_APP_SECRET（飞书开放平台自定义应用）。
     启动后保持运行，按 Ctrl+C 退出。
+    --daemon 模式：额外启动盘中监控轮询，定时拉取涨停池并检测异常推送飞书。
     """
     from daily_review.kb.index import KnowledgeIndex
     from daily_review.kb.qa import QASession
@@ -578,20 +579,56 @@ def _cmd_agent(args) -> None:
 
     # 启动飞书网关
     print("[agent] 启动飞书 WebSocket 网关...")
-    gateway = FeishuGateway.from_settings(
-        qa_session_factory=_qa_factory,
-        trade_date=trade_date,
-    )
-    if gateway is None:
-        return 1
 
-    try:
-        gateway.start()
-    except KeyboardInterrupt:
-        print("\n[agent] 用户中断，退出")
-    except Exception as exc:
-        print(f"[agent] ❌ 网关异常: {exc}")
-        return 1
+    if args.daemon:
+        # ---------- Daemon 模式（v0.33）：网关 + 轮询 + 异常推送 ----------
+        from daily_review.web.daemon import MarketDaemon
+
+        print(f"[agent] 盘中监控 Daemon 模式（轮询间隔 {args.poll_interval} 秒）")
+
+        gateway = FeishuGateway.from_settings(
+            qa_session_factory=_qa_factory,
+            trade_date=trade_date,
+        )
+        if gateway is None:
+            return 1
+
+        daemon = MarketDaemon(
+            gateway,
+            trade_date=trade_date,
+            home_channel=settings.feishu_home_channel,
+            poll_interval=args.poll_interval,
+            qa_session_factory=_qa_factory,
+        )
+
+        # 将市场概况函数注入网关（支持"现在什么情况"快速通道）
+        gateway._market_summary_fn = daemon.get_market_summary
+
+        print(f"[agent] 盘中监控已启动，按 Ctrl+C 退出")
+        try:
+            daemon.start()
+        except KeyboardInterrupt:
+            print("\n[agent] 用户中断，退出")
+            daemon.stop()
+        except Exception as exc:
+            print(f"[agent] ❌ Daemon 异常: {exc}")
+            return 1
+    else:
+        # ---------- 纯网关模式（当前行为） ----------
+        gateway = FeishuGateway.from_settings(
+            qa_session_factory=_qa_factory,
+            trade_date=trade_date,
+        )
+        if gateway is None:
+            return 1
+
+        try:
+            gateway.start()
+        except KeyboardInterrupt:
+            print("\n[agent] 用户中断，退出")
+        except Exception as exc:
+            print(f"[agent] ❌ 网关异常: {exc}")
+            return 1
     return 0
 
 
@@ -858,6 +895,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="飞书 Agent 网关：WebSocket 长连接，飞书群里@机器人提问（v0.32）",
     )
     p_agent.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
+    p_agent.add_argument(
+        "--daemon", action="store_true",
+        help="启动盘中监控 Daemon（v0.33）：定时轮询涨停池 + 异常检测 + 主动推送飞书",
+    )
+    p_agent.add_argument(
+        "--poll-interval", type=int, default=300,
+        help="轮询间隔（秒，默认 300，最小 60），仅 --daemon 模式有效",
+    )
     p_agent.set_defaults(func=_cmd_agent)
 
     p_web = sub.add_parser(

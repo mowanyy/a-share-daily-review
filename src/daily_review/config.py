@@ -82,6 +82,9 @@ class Settings:
         c.strip() for c in os.getenv("FEISHU_ALLOWED_CHAT_IDS", "").split(",") if c.strip()
     ])
 
+    # 盘中监控 Daemon（v0.33）：定时间隔（秒），用于 MarketDaemon 轮询涨停池
+    poll_interval: int = field(default_factory=lambda: int(os.getenv("POLL_INTERVAL", "300")))
+
 
 def get_settings() -> Settings:
     """返回单例配置。"""
