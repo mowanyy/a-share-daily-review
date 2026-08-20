@@ -192,6 +192,7 @@ python -m daily_review schedule install            # 查看将执行的命令用
 | 数据对象字段定义 | [docs/数据结构.md](docs/数据结构.md) |
 | 东方财富接口清单与防封 | [docs/东财接口清单.md](docs/东财接口清单.md) |
 | 运行环境与依赖复现 | [docs/开发环境.md](docs/开发环境.md) |
+| **完整操作文档（日常使用首选）** | [docs/操作指南.md](docs/操作指南.md) |
 | Git 工作流与版本规则 | [docs/版本管理.md](docs/版本管理.md) |
 | 个人战法编写规范 | [docs/战法规范.md](docs/战法规范.md) |
 | Web 移动端适配 | [docs/移动端适配方案.md](docs/移动端适配方案.md) |
