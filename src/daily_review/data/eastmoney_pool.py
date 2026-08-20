@@ -118,6 +118,11 @@ def _prev_date(ymd: str) -> str:
     return d.strftime("%Y%m%d")
 
 
+def _weekend(ymd: str) -> bool:
+    """YYYYMMDD 是否为周六/周日（A 股休市，探测/日历判定时跳过）。"""
+    return datetime.strptime(ymd, "%Y%m%d").weekday() >= 5
+
+
 def _pool_url(endpoint: str, trade_date: str, pagesize: int = 300) -> str:
     params = {
         "ut": POOL_UT,
@@ -236,12 +241,16 @@ def resolve_recent_trade_dates(start: str, n_days: int = 5) -> list[str]:
     返回**由近及远**（最新在前）的交易日列表。
     v0.23 A3：表内直接离线回推（确定性、无网络）；表缺失/不足 n_days → 现有
     涨停池探测 + 本地缓存兜底（向后兼容）。
+    v0.31.1：日历**过期（缺最近交易日）即不采信**——过期表即使能凑够 n_days 个
+    历史日期，也会给出错误的 prev 日期（缺最近交易日被跳过）。判 expired 后
+    直接走探测兜底，避免静默引用两天前数据。
     """
     try:
+        from daily_review.data.trade_calendar import is_fresh
         from daily_review.data.trade_calendar import recent_trade_dates as cal_recent
 
         cal = cal_recent(start, n_days)
-        if len(cal) >= n_days:
+        if len(cal) >= n_days and is_fresh():
             return cal
     except Exception:
         pass
@@ -252,6 +261,9 @@ def _resolve_trade_dates_by_probe(start: str, n_days: int = 5) -> list[str]:
     """探测式兜底：从 start 起逐日拉涨停池，空则回退，取 n 个非空日。
 
     优先走本地交易日历缓存（data/cache/trade_dates.csv）。
+    v0.31.1：周六/周日直接跳过（节假日日历不能精确判定时可再用接口探测，
+    但周末必休市，不必浪费请求且避免把周末误写进缓存）——此前缓存曾被
+    混入 20260815/16（周末），污染 prev 日期解析。
     """
     from daily_review.data.local_cache import add_trade_dates, load_trade_dates
 
@@ -261,6 +273,10 @@ def _resolve_trade_dates_by_probe(start: str, n_days: int = 5) -> list[str]:
     for _ in range(max(n_days * 4, 12)):
         if len(dates) >= n_days:
             break
+        if _weekend(cur):
+            cached.discard(cur)  # 周末必休市：清理历史误判缓存
+            cur = _prev_date(cur)
+            continue
         if cur in cached:
             dates.append(cur)
         else:
