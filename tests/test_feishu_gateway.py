@@ -178,3 +178,142 @@ def test_realtime_query_does_not_affect_compliance():
     )
     # 合规优先，不应走快速通道
     assert "无法给出" in reply
+
+
+# ---------- 多轮对话记忆注入（v0.34） ----------
+
+
+def _make_mock_session_manager(tmp_path):
+    """创建 ChatSessionManager 用于测试。"""
+    from daily_review.web.chat_session import ChatSessionManager
+    return ChatSessionManager(data_dir=tmp_path)
+
+
+def test_session_memory_injects_history(tmp_path):
+    """chat_session_manager 应注入历史到 QA 会话。"""
+    from daily_review.web.chat_session import ChatSessionManager
+    m = ChatSessionManager(data_dir=tmp_path)
+    m.add_turn("test_chat", "昨天涨停多少家", "昨天涨停68家")
+
+    class MockSessionWithHistory:
+        def __init__(self):
+            self.history = []
+
+        def answer(self, text):
+            # 验证历史已注入
+            has_history = len(self.history) > 0
+            from dataclasses import dataclass, field
+            @dataclass
+            class Result:
+                answer: str = ""
+                sources: list = field(default_factory=list)
+                tool_rounds: int = 0
+                error: str = ""
+            return Result(
+                answer=f"历史注入={'是' if has_history else '否'}"
+            )
+
+    def factory():
+        return MockSessionWithHistory()
+
+    reply = route_message(
+        "今天涨停多少家",
+        qa_session_factory=factory,
+        chat_session_manager=m,
+        chat_id="test_chat",
+    )
+    assert "历史注入=是" in reply
+
+
+def test_session_memory_saves_turn(tmp_path):
+    """chat_session_manager 应在 QA 回答后保存新轮次。"""
+    from daily_review.web.chat_session import ChatSessionManager
+    m = ChatSessionManager(data_dir=tmp_path)
+
+    class MockSession:
+        def __init__(self):
+            self.history = []
+
+        def answer(self, text):
+            from dataclasses import dataclass, field
+            @dataclass
+            class Result:
+                answer: str = ""
+                sources: list = field(default_factory=list)
+                tool_rounds: int = 0
+                error: str = ""
+            return Result(answer="今日涨停72家")
+
+    def factory():
+        return MockSession()
+
+    route_message(
+        "今天涨停多少家",
+        qa_session_factory=factory,
+        chat_session_manager=m,
+        chat_id="save_chat",
+    )
+    session = m.load("save_chat")
+    assert len(session["messages"]) == 2
+    assert session["messages"][0]["content"] == "今天涨停多少家"
+    assert session["messages"][1]["content"] == "今日涨停72家"
+
+
+def test_session_memory_without_chat_id_skips(tmp_path):
+    """不传 chat_id 时不触发会话记忆。"""
+    from daily_review.web.chat_session import ChatSessionManager
+    m = ChatSessionManager(data_dir=tmp_path)
+
+    class MockSession:
+        def __init__(self):
+            self.history = []
+
+        def answer(self, text):
+            from dataclasses import dataclass, field
+            @dataclass
+            class Result:
+                answer: str = ""
+                sources: list = field(default_factory=list)
+                tool_rounds: int = 0
+                error: str = ""
+            return Result(answer="OK")
+
+    def factory():
+        return MockSession()
+
+    route_message(
+        "test",
+        qa_session_factory=factory,
+        chat_session_manager=m,  # 有 manager 但无 chat_id
+    )
+    # 不应抛异常，不应保存
+    session = m.load("unknown")
+    assert session["messages"] == []
+
+
+def test_session_memory_without_manager_unchanged():
+    """不传 chat_session_manager 时行为不变。"""
+
+    class MockSession:
+        def __init__(self):
+            self.history = []
+
+        def answer(self, text):
+            from dataclasses import dataclass, field
+            @dataclass
+            class Result:
+                answer: str = ""
+                sources: list = field(default_factory=list)
+                tool_rounds: int = 0
+                error: str = ""
+            return Result(answer="正常回答")
+
+    def factory():
+        return MockSession()
+
+    reply = route_message(
+        "test",
+        qa_session_factory=factory,
+        # 不传 chat_session_manager
+    )
+    assert reply == "正常回答"

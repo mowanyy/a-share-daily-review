@@ -49,12 +49,14 @@ class MarketDaemon:
         home_channel: str = "",
         poll_interval: int = 300,
         qa_session_factory: Callable | None = None,
+        audit_db: object | None = None,
     ):
         self._gateway = gateway
         self._trade_date = trade_date
         self._home_channel = home_channel
         self._poll_interval = max(poll_interval, 60)  # 最小 60 秒
         self._qa_session_factory = qa_session_factory
+        self._audit_db = audit_db
 
         self._running = False
         self._poll_thread: threading.Thread | None = None
@@ -255,3 +257,9 @@ class MarketDaemon:
             logger.info("已推送异常: %s（%s）", anomaly.type, anomaly.severity)
         else:
             logger.error("异常推送失败: %s", anomaly.type)
+
+        # 审计日志
+        if self._audit_db is not None:
+            self._audit_db.log_anomaly(
+                anomaly.type, anomaly.severity, anomaly.message, anomaly.stocks,
+            )
