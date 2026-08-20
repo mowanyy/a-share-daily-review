@@ -213,6 +213,10 @@ class JobManager:
 
         self._set(job, step="计算指标（情绪温度/梯队/题材/炸板/龙虎榜）", progress=40)
         indicators = compute(collected)
+        # v0.30：完整复盘落盘权威快照（预案/开盘策略引用昨日值不再重算漂移）
+        from daily_review.analysis.review_snapshot import save_review_snapshot
+
+        save_review_snapshot(indicators, job.trade_date)
 
         if job.no_llm:
             job.logs.append("已跳过 LLM 报告（--no-llm）；数据与指标已就绪")

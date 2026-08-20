@@ -13,6 +13,7 @@ import json
 import math
 from pathlib import Path
 
+from daily_review.analysis.review_snapshot import load_review_snapshot
 from daily_review.config import get_settings
 from daily_review.llm.client import LLMError, chat
 from daily_review.prompts import get_prompt
@@ -64,6 +65,38 @@ def _fmt_money(v) -> str:
 
 # ---------------------------------------------------------------- 隔夜预案
 
+# v0.30：情绪温度权威值来自完整复盘快照（data/review_snapshots/{date}.json），
+# 快照缺失才回退 data 重算值并显式标注来源——消除同一历史日期跨消息重算漂移。
+_SNAPSHOT_SOURCE = "昨日复盘快照（权威落盘值）"
+_RECOMPUTE_SOURCE = "数据重算（昨日复盘快照缺失，本值仅当日可信）"
+
+
+def _emotion_block(indicators: dict) -> dict:
+    """情绪温度块（快照优先）：score/stage/stage_reason + 历史序列(旧→新) + 来源。
+
+    预案/开盘策略的 indicators 是「昨日」复盘数据；若该昨日已落盘权威快照则引用之，
+    否则回退本次重算值并如实标注来源，杜绝 LLM 对「昨日温度」自由发挥。
+    """
+    emo = indicators.get("emotion") or {}
+    trade_date = (indicators.get("ladder") or {}).get("trade_date", "")
+    snap = load_review_snapshot(trade_date) if trade_date else None
+    src_emo = (snap.get("emotion") or {}) if snap else emo
+    source = _SNAPSHOT_SOURCE if snap else _RECOMPUTE_SOURCE
+    series = src_emo.get("series") or []
+    hist = [
+        {"date": s.get("date"), "score": s.get("score")}
+        for s in reversed(series)
+        if s.get("score") is not None
+    ]
+    return {
+        "score": src_emo.get("score"),
+        "stage": src_emo.get("stage"),
+        "stage_reason": src_emo.get("stage_reason"),
+        "历史序列(旧→新)": hist,
+        "来源": source,
+    }
+
+
 def _overnight_digest(indicators: dict) -> dict:
     """隔夜预案所需的紧凑摘要（聚焦题材与情绪，不含龙虎榜等较细数据）。"""
     ladder = indicators.get("ladder", {})
@@ -84,11 +117,7 @@ def _overnight_digest(indicators: dict) -> dict:
             "max_lb_stock": ladder.get("max_lb_stock", ""),
             "break_rate": ladder.get("break_rate", 0.0),
         },
-        "情绪温度": {
-            "score": emo.get("score"),
-            "stage": emo.get("stage"),
-            "stage_reason": emo.get("stage_reason"),
-        },
+        "情绪温度": _emotion_block(indicators),
         "主要题材": [
             {
                 "name": t.get("theme_name", ""),
@@ -134,6 +163,8 @@ def _overnight_user(indicators: dict, news_list: list[dict], trade_date: str) ->
         f"```json\n{news_text}\n```\n\n"
         "请输出「隔夜预案」：消息面汇总 → 消息-题材联动分析 → 今日关注方向。"
         "只输出正文，不要标题、不要编造数字。"
+        "昨日情绪温度及其历史序列必须逐字引用上方 JSON 数值（含日期），"
+        "提及任一历史日期情绪温度只能引自该 JSON，禁止按记忆/推算改动或补数。"
     )
 
 
@@ -211,10 +242,7 @@ def _open_strategy_digest(indicators: dict) -> dict:
             "max_lb": ladder.get("max_lb", 0),
             "max_lb_stock": ladder.get("max_lb_stock", ""),
         },
-        "情绪温度": {
-            "score": emo.get("score"),
-            "stage": emo.get("stage"),
-        },
+        "情绪温度": _emotion_block(indicators),
         "梯队分组(已核算)": [
             {
                 "height": f"{layer['height']}板",
@@ -241,6 +269,8 @@ def _open_strategy_user(
         f"```json\n{_compact_json(auction_data)}\n```\n\n"
         "请输出「开盘策略」：1 段竞价总览 → 有机会的个股清单 → 开盘执行提示。"
         "只输出正文，不要标题、不要编造数字、不要列无数据支撑的个股。"
+        "昨日情绪温度及其历史序列必须逐字引用上方 JSON 数值（含日期），"
+        "提及任一历史日期情绪温度只能引自该 JSON，禁止按记忆/推算改动或补数。"
     )
 
 
