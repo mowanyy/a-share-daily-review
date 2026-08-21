@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "daily-review"
-version = "0.35.0"
+version = "0.35.1"
 description = "A股超短连板收盘复盘系统：情绪温度 / 连板梯队 / 题材周期 / 炸板资金 / 龙虎榜游资 / AI复盘 / RAG问答 / Web工作台 / 多模型协作 / 复盘三时段 / 概念池 / 数据本地化 / 战法↔Skill桥 / 基金风格skill档案 / 飞书Agent网关"
 readme = "README.md"
 requires-python = ">=3.10"
