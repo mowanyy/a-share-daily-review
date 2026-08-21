@@ -308,6 +308,27 @@ def route_message(
 
 # ---------- 飞书事件处理 ----------
 
+# 消息去重：记录已处理的消息 ID（message_id → 处理时间戳），防止 WebSocket 重连导致重复回复
+_PROCESSED_MESSAGE_IDS: dict[str, float] = {}
+_DEDUP_TTL = 60  # 消息 ID 保留 60 秒（超过此窗口的重发视为新消息）
+
+
+def _dedup_message(message_id: str) -> bool:
+    """检查消息是否已处理过。返回 True 表示已处理（应跳过）。"""
+    global _PROCESSED_MESSAGE_IDS
+    now = time.time()
+    # 清理过期记录
+    stale = [mid for mid, ts in _PROCESSED_MESSAGE_IDS.items() if now - ts > _DEDUP_TTL]
+    for mid in stale:
+        _PROCESSED_MESSAGE_IDS.pop(mid, None)
+    # 检查是否已处理
+    if message_id in _PROCESSED_MESSAGE_IDS:
+        logger.warning("消息去重: message_id=%s 已处理过，跳过", message_id)
+        return True
+    _PROCESSED_MESSAGE_IDS[message_id] = now
+    return False
+
+
 def _handle_p2_im_message_receive(
     token_manager: TokenManager,
     qa_session_factory: Callable | None = None,
@@ -320,6 +341,7 @@ def _handle_p2_im_message_receive(
 
     处理飞书消息接收事件：解析消息内容、路由、回复。
     v0.34：支持多轮对话记忆 + 审计日志。
+    v0.35.1：消息去重，防止 WebSocket 重连/事件重复投递导致多次回复。
     """
     from lark_oapi.api.im.v1.model import P2ImMessageReceiveV1
 
@@ -336,6 +358,11 @@ def _handle_p2_im_message_receive(
                 return
 
             message = event_body.message
+
+            # 消息去重：根据 message_id 判断是否已处理过
+            message_id = getattr(message, 'message_id', '') or ''
+            if message_id and _dedup_message(message_id):
+                return
 
             # 只处理文本消息（兼容 msg_type / message_type 字段名）
             msg_type = getattr(message, 'message_type', None) or getattr(message, 'msg_type', '')
