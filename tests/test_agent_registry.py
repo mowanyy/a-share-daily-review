@@ -135,16 +135,17 @@ class TestQueryAgentTool:
 
         # 验证 handler 存在
         ctx = DataToolContext(default_date="20260806")
-        result = execute_tool("query_agent", {"agent_id": "qa_general", "question": "测试"}, ctx)
+        result, ms = execute_tool("query_agent", {"agent_id": "qa_general", "question": "测试"}, ctx)
         data = json.loads(result)
         assert "agent_id" in data
         assert "answer" in data
+        assert ms > 0
 
     def test_query_agent_tool_missing_agent_id(self, monkeypatch):
         from daily_review.kb.tools import DataToolContext, execute_tool
 
         ctx = DataToolContext(default_date="20260806")
-        result = execute_tool("query_agent", {"question": "测试"}, ctx)
+        result, ms = execute_tool("query_agent", {"question": "测试"}, ctx)
         data = json.loads(result)
         assert "error" in data
 
@@ -152,7 +153,7 @@ class TestQueryAgentTool:
         from daily_review.kb.tools import DataToolContext, execute_tool
 
         ctx = DataToolContext(default_date="20260806")
-        result = execute_tool("query_agent", {"agent_id": "qa_general"}, ctx)
+        result, ms = execute_tool("query_agent", {"agent_id": "qa_general"}, ctx)
         data = json.loads(result)
         assert "error" in data
 

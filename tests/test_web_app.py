@@ -358,3 +358,78 @@ def test_dashboard_cache_evicts_oldest(monkeypatch):
     # 最多保留 MAX=16 条，逐出最旧
     assert c.get(("20260730", 0, True), "20260730") is None
     assert c.get(("20260730", 19, True), "20260730") == "h19"
+
+
+# ---------------------------------------------------------------- 审计日志页面（v0.35）
+
+
+def test_audit_page_renders(app):
+    """审计日志页面可渲染，零外链。"""
+    r = app.test_client().get("/audit")
+    assert r.status_code == 200
+    html = r.get_data(as_text=True)
+    assert "Agent 日志" in html
+    for bad in ("http://", "https://", "<script src", "<link"):
+        assert bad not in html, f"audit page contains {bad}"
+
+
+def test_audit_messages_api(app, tmp_path, monkeypatch):
+    """审计消息 API 返回数据，不报错。"""
+    from daily_review.web.audit import AuditDB
+
+    db = AuditDB(db_path=tmp_path / "test_audit.db")
+    db.log_message("chat_1", "user", "test question")
+    db.log_message("chat_1", "assistant", "test answer")
+    monkeypatch.setitem(app.extensions, "audit_db", db)
+    c = app.test_client()
+    r = c.get("/api/audit/messages")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["count"] == 2
+    assert len(data["messages"]) == 2
+    assert data["messages"][0]["role"] == "assistant"
+
+
+def test_audit_anomalies_api(app, tmp_path, monkeypatch):
+    """审计异常 API 返回数据。"""
+    from daily_review.web.audit import AuditDB
+
+    db = AuditDB(db_path=tmp_path / "test_audit.db")
+    db.log_anomaly("炸板潮", "warning", "5只炸板", ["A", "B"])
+    monkeypatch.setitem(app.extensions, "audit_db", db)
+    c = app.test_client()
+    r = c.get("/api/audit/anomalies")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["count"] == 1
+    assert data["anomalies"][0]["type"] == "炸板潮"
+
+
+def test_audit_traces_api(app, tmp_path, monkeypatch):
+    """审计 trace API 返回数据。"""
+    from daily_review.web.audit import AuditDB
+
+    db = AuditDB(db_path=tmp_path / "test_audit.db")
+    db.log_trace("web", "分析今日市场", '{"tool_calls":[],"total_rounds":0}')
+    monkeypatch.setitem(app.extensions, "audit_db", db)
+    c = app.test_client()
+    r = c.get("/api/audit/traces")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["count"] == 1
+    assert "分析今日市场" in data["traces"][0]["question"]
+
+
+def test_audit_chat_ids_api(app, tmp_path, monkeypatch):
+    """审计 chat_ids API 返回有消息记录的聊天 ID。"""
+    from daily_review.web.audit import AuditDB
+
+    db = AuditDB(db_path=tmp_path / "test_audit.db")
+    db.log_message("chat_a", "user", "hi")
+    db.log_message("chat_b", "user", "hello")
+    monkeypatch.setitem(app.extensions, "audit_db", db)
+    c = app.test_client()
+    r = c.get("/api/audit/chat-ids")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert sorted(data["chat_ids"]) == ["chat_a", "chat_b"]

@@ -57,15 +57,18 @@ def test_schemas_well_formed():
 
 def test_execute_tool_unknown():
     ctx = DataToolContext(default_date="20260806")
-    out = execute_tool("not_a_tool", {}, ctx)
+    out, ms = execute_tool("not_a_tool", {}, ctx)
     assert "error" in out and "未知工具" in out
+    assert ms > 0  # 耗时 > 0ms
 
 
 def test_execute_tool_validation_without_network():
     """参数缺失在采集前被拦截，不触发网络。"""
     ctx = DataToolContext(default_date="20260806")
-    assert "error" in execute_tool("query_moneyflow", {}, ctx)
-    assert "error" in execute_tool("query_themes_timeline", {}, ctx)
+    out1, _ = execute_tool("query_moneyflow", {}, ctx)
+    assert "error" in out1
+    out2, _ = execute_tool("query_themes_timeline", {}, ctx)
+    assert "error" in out2
 
 
 def test_default_trade_date_probe(monkeypatch):
@@ -94,7 +97,7 @@ def test_two_round_tool_loop(monkeypatch, index):
     tool_payload = '{"trade_date": "20260806", "zt_count": 20, "lianban_count": 5}'
 
     def fake_execute(name, args, ctx):
-        return tool_payload
+        return (tool_payload, 1.5)  # v0.35：返回 (json_str, duration_ms)
 
     monkeypatch.setattr(qa_mod, "execute_tool", fake_execute)
 
@@ -123,7 +126,7 @@ def test_two_round_tool_loop(monkeypatch, index):
 
 def test_tool_loop_stops_at_max_rounds(monkeypatch, index):
     def fake_execute(name, args, ctx):
-        return '{"ok": 1}'
+        return ('{"ok": 1}', 0.5)  # v0.35：返回 (json_str, duration_ms)
 
     monkeypatch.setattr(qa_mod, "execute_tool", fake_execute)
 

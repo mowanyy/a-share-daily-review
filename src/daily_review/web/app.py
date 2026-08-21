@@ -19,6 +19,11 @@ def create_app() -> Flask:
     app.extensions["jobs"] = JobManager()
     app.extensions["dashboard_cache"] = DashboardCache()
 
+    # v0.35：审计日志（data/audit.db），惰性初始化
+    from daily_review.web.audit import AuditDB
+
+    app.extensions["audit_db"] = AuditDB()
+
     from daily_review.web.routes import api_bp, pages_bp
 
     app.register_blueprint(pages_bp)

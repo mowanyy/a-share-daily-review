@@ -9,6 +9,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.35.0`：**阶段四——自主规划 + 可观测性**。新增 `kb/planner.py`（Agent 规划器：Plan → Execute → Reflect 闭环，复杂问题先调 LLM 生成结构化执行计划再注入 system prompt，简单问题零开销跳过，失败静默降级）；`kb/qa.py` 集成规划器（`_generate_plan` + `_inject_plan`），新增 `QATrace`/`ToolCallRecord` 数据类，`_run_loop` 记录每次工具调用的名称/参数/耗时/结果摘要，`QAResult` 扩展 `trace` 字段；`kb/tools.py` `execute_tool` 返回 `(json_str, duration_ms)` 元组支持耗时追踪；`web/audit.py` 新增 `tool_calls` 表 + `log_trace`/`recent_traces`/`list_chat_ids` 方法；`web/app.py` 自动初始化 AuditDB 到 `app.extensions`；`web/routes.py` 新增 `GET /audit` 审计日志页面路由 + 5 个审计 API（messages/anomalies/errors/traces/chat-ids），`POST /api/qa/ask` 回包新增 `trace` 字段并写入审计日志；`web/templates/audit.html` 审计日志 UI（4 个 tab：消息记录/异常事件/错误日志/工具调用链）；`base.html` 导航栏新增「Agent 日志」链接；新增 `prompts/modules/规划器.md` 规划器 prompt。新增 tests/test_planner.py（16 例）+ 增补 tests/test_audit.py（10 例）+ test_web_app.py（5 例）+ test_qa_tools.py（4 例）+ test_agent_registry.py（3 例）。**563 测试通过**。
+
 `v0.34.0`：**Agent 深度化（阶段三核心）——多轮对话记忆 + SQLite 审计日志**。新增 `web/chat_session.py`（ChatSessionManager：每个 chat_id 独立 JSON 文件 `data/chat_sessions/{chat_id}.json`，复用 fund_sessions 模式，自动裁剪最近 10 轮，原子写入）与 `web/audit.py`（AuditDB：SQLite 审计日志 `data/audit.db`，三表 messages/anomalies/errors，只依赖标准库 sqlite3，线程安全按 db_path 独立缓存连接，WAL+NORMAL 同步）。`web/feishu_gateway.py` 的 `route_message` 新增 `chat_session_manager`/`chat_id` 参数：QA 回答前注入历史记忆、回答后保存新轮次；所有消息写入审计日志。`web/daemon.py` 接受 `audit_db`，异常推送时同步记日志。CLI `agent` 子命令自动初始化两者（纯网关/Daemon 模式均启用）。新增 tests/test_chat_session.py（12 例）+ tests/test_audit.py（10 例）+ test_feishu_gateway.py 4 例记忆注入。**537 测试通过**。
 
 `v0.33.0`：**常驻 Daemon 盘中实时化（阶段二）——定时轮询 + 异常检测 + 主动推送飞书 + 盘中实时问答快速通道**。新增 `web/monitor.py`（异常检测引擎，纯函数）：4 类规则——炸板潮（单窗口 ≥5 只 warning/≥10 只 alert）、题材爆发（同行业 ≥3 只新涨停，需行业映射）、龙头异动（空间板炸板 alert/回封 info）、情绪骤变（涨停数较上轮降 >30%）。新增 `web/daemon.py`（MarketDaemon：轮询线程默认 300s 最小 60s 与 FeishuGateway WebSocket 并行，首次轮询自动建基准+识别空间板+加载行业映射，异常推彩色卡片到 FEISHU_HOME_CHANNEL；`get_market_summary()` 盘中小结 <1s 不经 RAG）。`feishu_gateway.py` `route_message` 新增 `market_summary_fn`：问「现在/实时/当前/什么情况/市场概况/怎么样」走快速通道。CLI `agent` 新增 `--daemon`/`--poll-interval 300`。config.py 新增 `poll_interval`。新增 tests/test_monitor.py（21 例）+ test_feishu_gateway.py 6 例。**向后兼容：--daemon 缺省关闭，纯网关行为不变**。**511 测试通过**。
@@ -192,6 +194,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `module.hotspot` | `prompts/modules/热点信息简报.md` | draft |
 | `module.overnight` | `prompts/modules/隔夜预案.md` | draft |
 | `module.open_strategy` | `prompts/modules/开盘策略.md` | draft |
+| `module.planner` | `prompts/modules/规划器.md` | active |
 | `strategy.template` | `prompts/strategies/战法模板.md` | draft |
 | `strategy.example` | `prompts/strategies/示例-连板接力.md` | draft |
 | `tool.datatools` | `prompts/tools/数据工具schema.md` | draft |

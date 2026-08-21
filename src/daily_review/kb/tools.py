@@ -4,10 +4,12 @@
   query_theme / query_themes_timeline
 - 按交易日 memo 采集与指标（DataToolContext）：同一天多次工具调用不重复跑管道
 - 结果用 reporter._compact_json 紧凑序列化；异常/未知工具 → {"error":...}（LLM 可解释，不中断）
+- v0.35：execute_tool 返回 (json_str, duration_ms) 元组，支持 Trace 追踪
 """
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from typing import Any
 
@@ -300,15 +302,26 @@ _TOOL_HANDLERS: dict[str, callable] = {
 TOOL_NAMES: list[str] = list(_TOOL_HANDLERS)
 
 
-def execute_tool(name: str, args: dict, ctx: DataToolContext) -> str:
-    """执行一个工具，返回紧凑 JSON 字符串（错误也序列化为 JSON，供 LLM 解释）。"""
+def execute_tool(name: str, args: dict, ctx: DataToolContext) -> tuple[str, float]:
+    """执行一个工具，返回 (紧凑 JSON 字符串, 耗时毫秒) 元组。
+
+    错误也序列化为 JSON 字符串，供 LLM 解释。
+    v0.35：新增耗时返回，支持 Trace 追踪。
+    """
+    t0 = time.perf_counter()
     handler = _TOOL_HANDLERS.get(name)
     if handler is None:
-        return _compact_json({"error": f"未知工具 {name}", "available": TOOL_NAMES})
+        result = _compact_json({"error": f"未知工具 {name}", "available": TOOL_NAMES})
+        duration_ms = (time.perf_counter() - t0) * 1000
+        return result, duration_ms
     try:
-        return _compact_json(handler(ctx, args or {}))
+        result = _compact_json(handler(ctx, args or {}))
+        duration_ms = (time.perf_counter() - t0) * 1000
+        return result, duration_ms
     except Exception as exc:  # noqa: BLE001 — 采集/指标失败不中断对话
-        return _compact_json({"error": f"{name} 执行失败：{exc}", "args": args})
+        result = _compact_json({"error": f"{name} 执行失败：{exc}", "args": args})
+        duration_ms = (time.perf_counter() - t0) * 1000
+        return result, duration_ms
 
 
 def get_tool_schemas() -> list[dict]:
