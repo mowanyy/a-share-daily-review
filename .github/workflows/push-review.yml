@@ -46,4 +46,4 @@ jobs:
           git checkout -b data-branch origin/data-branch 2>/dev/null || git checkout --orphan data-branch
           git add -f data/ output/
           git commit -m "chore(data): auto-save $(date '+%Y%m%d') data and reports" || echo "No changes to commit"
-          git push origin data-branch
+          git push --force origin data-branch
