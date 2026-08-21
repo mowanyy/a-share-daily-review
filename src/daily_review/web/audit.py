@@ -7,6 +7,8 @@
 - messages:  所有飞书来回消息（chat_id, role, content, created_at）
 - anomalies: 盘中检测到的异常事件（type, severity, message, stocks）
 - errors:    Agent 运行中的错误（source, error_type, message）
+
+v0.35：新增 tool_calls 表，记录每次 QA 的完整工具调用链（trace）。
 """
 
 from __future__ import annotations
@@ -78,6 +80,14 @@ class AuditDB:
                 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
                 CREATE INDEX IF NOT EXISTS idx_anomalies_created_at ON anomalies(created_at);
                 CREATE INDEX IF NOT EXISTS idx_errors_created_at ON errors(created_at);
+                CREATE TABLE IF NOT EXISTS tool_calls (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id TEXT,
+                    question TEXT NOT NULL,
+                    trace_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at);
             """)
         finally:
             conn.close()
@@ -120,13 +130,20 @@ class AuditDB:
     # ---------------------------------------------------------------- 查询
 
     def recent_messages(self, chat_id: str, limit: int = 20) -> list[dict]:
-        """查询最近消息记录。"""
+        """查询最近消息记录。chat_id 为空字符串时返回所有聊天消息。"""
         conn = self._get_conn()
-        rows = conn.execute(
-            "SELECT id, role, content, created_at FROM messages "
-            "WHERE chat_id=? ORDER BY id DESC LIMIT ?",
-            (chat_id, limit),
-        ).fetchall()
+        if chat_id:
+            rows = conn.execute(
+                "SELECT id, role, content, created_at FROM messages "
+                "WHERE chat_id=? ORDER BY id DESC LIMIT ?",
+                (chat_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, role, content, created_at FROM messages "
+                "ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [
             {"id": r[0], "role": r[1], "content": r[2], "created_at": r[3]}
             for r in rows
@@ -160,3 +177,38 @@ class AuditDB:
             {"id": r[0], "source": r[1], "error_type": r[2], "message": r[3], "created_at": r[4]}
             for r in rows
         ]
+
+    # ---------------------------------------------------------------- Trace 日志（v0.35）
+
+    def log_trace(self, chat_id: str | None, question: str, trace_json: str) -> None:
+        """记录一次 QA 的完整工具调用链。"""
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO tool_calls (chat_id, question, trace_json) VALUES (?, ?, ?)",
+            (chat_id, question[:500], trace_json),
+        )
+        conn.commit()
+
+    def recent_traces(self, limit: int = 50) -> list[dict]:
+        """查询最近工具调用链。"""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT id, chat_id, question, trace_json, created_at "
+            "FROM tool_calls ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            {
+                "id": r[0], "chat_id": r[1], "question": r[2],
+                "trace_json": r[3], "created_at": r[4],
+            }
+            for r in rows
+        ]
+
+    def list_chat_ids(self) -> list[str]:
+        """列出有消息记录的 chat_id（去重）。"""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT DISTINCT chat_id FROM messages WHERE chat_id IS NOT NULL ORDER BY chat_id"
+        ).fetchall()
+        return [r[0] for r in rows]

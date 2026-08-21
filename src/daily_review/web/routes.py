@@ -72,6 +72,11 @@ def concepts_page():
     return render_template("concepts.html")
 
 
+@pages_bp.get("/audit")
+def audit_page():
+    return render_template("audit.html")
+
+
 # ---------------------------------------------------------------- 战法 API
 
 
@@ -538,24 +543,35 @@ def api_qa_ask():
     trade_date = str(data.get("date", "")).strip() or _recent_date()
     session = QASession(index, trade_date=trade_date, top_k=5, use_embedding=True)
     result = session.answer(question)
-    return jsonify(
-        {
-            "answer": result.answer,
-            "answer_html": md_to_html(result.answer),
-            "sources": [
-                {
-                    "source_rel": h.source_rel,
-                    "section": h.section,
-                    "text": h.text,
-                    "score": round(float(h.score), 4),
-                    "date": h.date,
-                }
-                for h in result.sources
-            ],
-            "tool_rounds": result.tool_rounds,
-            "error": result.error,
-        }
-    )
+    resp = {
+        "answer": result.answer,
+        "answer_html": md_to_html(result.answer),
+        "sources": [
+            {
+                "source_rel": h.source_rel,
+                "section": h.section,
+                "text": h.text,
+                "score": round(float(h.score), 4),
+                "date": h.date,
+            }
+            for h in result.sources
+        ],
+        "tool_rounds": result.tool_rounds,
+        "error": result.error,
+    }
+    # v0.35：工具调用 Trace
+    if result.trace is not None:
+        trace_dict = result.trace.to_dict()
+        resp["trace"] = trace_dict
+        # 写入审计日志
+        try:
+            import json as _json
+            audit_db = current_app.extensions.get("audit_db")
+            if audit_db is not None:
+                audit_db.log_trace("web", question, _json.dumps(trace_dict, ensure_ascii=False))
+        except Exception:
+            pass
+    return jsonify(resp)
 
 
 # ---------------------------------------------------------------- 数据看板 API
@@ -724,3 +740,71 @@ def api_config_llm():
     from daily_review.config import get_settings
 
     return jsonify({"configured": bool(get_settings().llm_api_key)})
+
+
+# ---------------------------------------------------------------- 审计日志 API（v0.35）
+
+
+def _get_audit_db():
+    """获取进程内共享的 AuditDB 实例（从 app 扩展取）。"""
+    from flask import current_app
+
+    return current_app.extensions.get("audit_db")
+
+
+@api_bp.get("/api/audit/messages")
+def api_audit_messages():
+    """消息记录列表。参数：chat_id（可选），limit（缺省 50）。"""
+    audit_db = _get_audit_db()
+    if audit_db is None:
+        return jsonify({"error": "审计日志未启用"}), 400
+    chat_id = request.args.get("chat_id", "").strip() or None
+    limit = min(int(request.args.get("limit", "50")), 200)
+    if chat_id:
+        messages = audit_db.recent_messages(chat_id, limit=limit)
+    else:
+        messages = audit_db.recent_messages("", limit=limit) if hasattr(audit_db, 'recent_messages') else []
+    return jsonify({"messages": messages, "count": len(messages)})
+
+
+@api_bp.get("/api/audit/anomalies")
+def api_audit_anomalies():
+    """异常事件列表。参数：limit（缺省 50）。"""
+    audit_db = _get_audit_db()
+    if audit_db is None:
+        return jsonify({"error": "审计日志未启用"}), 400
+    limit = min(int(request.args.get("limit", "50")), 200)
+    anomalies = audit_db.recent_anomalies(limit=limit)
+    return jsonify({"anomalies": anomalies, "count": len(anomalies)})
+
+
+@api_bp.get("/api/audit/errors")
+def api_audit_errors():
+    """错误日志列表。参数：limit（缺省 50）。"""
+    audit_db = _get_audit_db()
+    if audit_db is None:
+        return jsonify({"error": "审计日志未启用"}), 400
+    limit = min(int(request.args.get("limit", "50")), 200)
+    errors = audit_db.recent_errors(limit=limit)
+    return jsonify({"errors": errors, "count": len(errors)})
+
+
+@api_bp.get("/api/audit/traces")
+def api_audit_traces():
+    """工具调用链列表。参数：limit（缺省 50）。"""
+    audit_db = _get_audit_db()
+    if audit_db is None:
+        return jsonify({"error": "审计日志未启用"}), 400
+    limit = min(int(request.args.get("limit", "50")), 200)
+    traces = audit_db.recent_traces(limit=limit)
+    return jsonify({"traces": traces, "count": len(traces)})
+
+
+@api_bp.get("/api/audit/chat-ids")
+def api_audit_chat_ids():
+    """有消息记录的 chat_id 列表。"""
+    audit_db = _get_audit_db()
+    if audit_db is None:
+        return jsonify({"error": "审计日志未启用"}), 400
+    chat_ids = audit_db.list_chat_ids()
+    return jsonify({"chat_ids": chat_ids})

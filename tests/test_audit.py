@@ -121,3 +121,51 @@ class TestInit:
         db2.log_message("c", "user", "test2")
         msgs = db2.recent_messages("c")
         assert len(msgs) == 2
+
+
+# ---------------------------------------------------------------- Trace（v0.35）
+
+
+class TestTraces:
+    def test_log_and_query_trace(self, tmp_path):
+        db = _db(tmp_path)
+        trace_json = '{"question":"分析今日市场","tool_calls":[{"tool":"query_zt_pool","duration_ms":320}],"total_rounds":1,"total_duration_ms":320}'
+        db.log_trace("web", "分析今日市场", trace_json)
+        traces = db.recent_traces()
+        assert len(traces) == 1
+        assert traces[0]["question"] == "分析今日市场"
+        assert traces[0]["chat_id"] == "web"
+        assert "query_zt_pool" in traces[0]["trace_json"]
+
+    def test_traces_by_chat_id(self, tmp_path):
+        db = _db(tmp_path)
+        db.log_trace("chat_a", "q1", '{"rounds":1}')
+        db.log_trace("chat_b", "q2", '{"rounds":2}')
+        traces = db.recent_traces()
+        assert len(traces) == 2
+
+    def test_trace_question_truncated(self, tmp_path):
+        """长问题截断到 500 字符，不报错。"""
+        db = _db(tmp_path)
+        long_q = "x" * 1000
+        db.log_trace("web", long_q, '{"rounds":1}')
+        traces = db.recent_traces()
+        assert len(traces) == 1
+        assert len(traces[0]["question"]) <= 500
+
+    def test_empty_traces_returns_empty(self, tmp_path):
+        db = _db(tmp_path)
+        assert db.recent_traces() == []
+
+
+class TestChatIds:
+    def test_list_chat_ids(self, tmp_path):
+        db = _db(tmp_path)
+        db.log_message("chat_a", "user", "hi")
+        db.log_message("chat_b", "user", "hello")
+        ids = db.list_chat_ids()
+        assert sorted(ids) == ["chat_a", "chat_b"]
+
+    def test_empty_chat_ids(self, tmp_path):
+        db = _db(tmp_path)
+        assert db.list_chat_ids() == []

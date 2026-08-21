@@ -28,6 +28,7 @@
 | `module.hotspot` | [modules/热点信息简报.md](modules/热点信息简报.md) | report | 概念板块行情、当日题材 | 当日热点主线简报 | draft |
 | `module.overnight` | [modules/隔夜预案.md](modules/隔夜预案.md) | report | 昨日复盘 + 东财7x24隔夜消息 | 隔夜预案（消息面联动关注方向） | draft |
 | `module.open_strategy` | [modules/开盘策略.md](modules/开盘策略.md) | report | 昨日复盘 + 隔夜预案 + 竞价数据 | 开盘策略（有机会个股清单） | draft |
+| `module.planner` | [modules/规划器.md](modules/规划器.md) | qa | 用户问题、可用工具列表 | 结构化 JSON 执行计划 | active |
 | `strategy.template` | [strategies/战法模板.md](strategies/战法模板.md) | strategy | —（模板） | 战法文件结构 | draft |
 | `strategy.example` | [strategies/示例-连板接力.md](strategies/示例-连板接力.md) | strategy | —（示例） | 示范战法 | draft |
 | `example.report` | [examples/复盘示例_20260806.md](examples/复盘示例_20260806.md) | example | 示意数据 | 复盘范文 | draft |
