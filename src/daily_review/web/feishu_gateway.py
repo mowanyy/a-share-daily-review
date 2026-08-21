@@ -26,7 +26,9 @@ from daily_review.config import get_settings
 logger = logging.getLogger(__name__)
 
 # QA 超时时间（秒）
-QA_TIMEOUT = 30
+# 推理模型（deepseek-v4-flash）思考慢，设为 120 秒；
+# 超过此时间仍未返回则回复"正在思考中"，避免 WebSocket 长连接因事件循环阻塞而断连。
+QA_TIMEOUT = 120
 
 # ---------- 常量 ----------
 
@@ -264,6 +266,9 @@ def route_message(
 
     # 2. QA 会话（RAG + 数据工具 function-calling），带超时保护
     #    v0.34：注入多轮对话记忆 + 保存新轮次
+    #    v0.35.1：改用全局 executor + shutdown(wait=False) 避免阻塞事件循环
+    #            （with 块退出时 shutdown(wait=True) 会等任务完成，阻塞
+    #              asyncio 事件循环导致 WebSocket ping 超时断连）
     if qa_session_factory is not None:
         try:
             session = qa_session_factory()
@@ -272,9 +277,8 @@ def route_message(
                 history = chat_session_manager.get_history(chat_id)
                 if history:
                     session.history = history
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                fut = pool.submit(session.answer, text)
-                result = fut.result(timeout=QA_TIMEOUT)
+            fut = _QA_EXECUTOR.submit(session.answer, text)
+            result = fut.result(timeout=QA_TIMEOUT)
             if result.answer:
                 # 保存新轮次到会话记忆
                 if chat_session_manager is not None and chat_id is not None:
@@ -311,6 +315,9 @@ def route_message(
 # 消息去重：记录已处理的消息 ID（message_id → 处理时间戳），防止 WebSocket 重连导致重复回复
 _PROCESSED_MESSAGE_IDS: dict[str, float] = {}
 _DEDUP_TTL = 60  # 消息 ID 保留 60 秒（超过此窗口的重发视为新消息）
+
+# 全局 QA 线程池（v0.35.1）：避免 with 块退出时 shutdown(wait=True) 阻塞 asyncio 事件循环
+_QA_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="qa")
 
 
 def _dedup_message(message_id: str) -> bool:
@@ -361,6 +368,7 @@ def _handle_p2_im_message_receive(
 
             # 消息去重：根据 message_id 判断是否已处理过
             message_id = getattr(message, 'message_id', '') or ''
+            logger.info("消息 message_id=%s, text=%s", message_id, text[:30])
             if message_id and _dedup_message(message_id):
                 return
 
