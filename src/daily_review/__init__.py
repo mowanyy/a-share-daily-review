@@ -189,6 +189,26 @@ v0.15：Web 工作台移动端适配——base.html 全局媒体查询（≤767p
 	      进度放大）、_ewma_smooth（alpha=0.3+0.5*progress 动态加权）。盘中
 	      compute_emotion 不再仅加 notes，而是用归一化 raw 重新计分后做 EWMA 平滑，
 	      使早盘分数更接近收盘最终值。439 测试通过。
+	v0.32：飞书 Agent 网关（阶段一）——web/feishu_gateway.py：FeishuGateway
+	      （lark-oapi WebSocket 长连接，无需公网地址）、TokenManager（自动刷新
+	      tenant_access_token）、send_text/send_card（彩色卡片）、route_message
+	      （消息路由→QA/合规拒绝）、is_compliance_risk（交易建议关键词过滤）。
+	      CLI agent 子命令 + config feishu_app_id/secret/home_channel/
+	      allowed_chat_ids。484 测试通过。
+	v0.33：常驻 Daemon 盘中实时化（阶段二）——web/monitor.py 异常检测引擎
+	      （炸板潮/题材爆发/龙头异动/情绪骤变 4 规则）+ web/daemon.py MarketDaemon
+	      （轮询默认 300s 最小 60s，与 WebSocket 并行；首次自动建基准+识别空间板
+	      +行业映射；异常推彩色卡片；get_market_summary 盘中小结 <1s 不走 RAG）。
+	      route_message 新增 market_summary_fn 快速通道（现在/实时/当前/什么情况/
+	      市场概况/怎么样）。CLI agent 新增 --daemon/--poll-interval，config 新增
+	      poll_interval。向后兼容：--daemon 缺省关闭。511 测试通过。
+	v0.34：Agent 深度化（阶段三核心）——web/chat_session.py ChatSessionManager
+	      （每 chat_id 独立 JSON 最近 10 轮，复用 fund_sessions 模式）+ web/audit.py
+	      AuditDB（SQLite 审计 data/audit.db，messages/anomalies/errors 三表，
+	      纯标准库、线程安全按 db_path 缓存连接、WAL）。route_message 新增
+	      chat_session_manager/chat_id：QA 前注入历史、答后保存新轮次；消息全量
+	      审计。daemon 异常推送同步记审计。CLI agent 自动初始化两者（纯网关/Daemon
+	      均启用）。537 测试通过。
 """
 
-__version__ = "0.34.0"
+__version__ = "0.34.1"

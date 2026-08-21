@@ -8,6 +8,10 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.34.0`：**Agent 深度化（阶段三核心）——多轮对话记忆 + SQLite 审计日志**。新增 `web/chat_session.py`（ChatSessionManager：每个 chat_id 独立 JSON 文件 `data/chat_sessions/{chat_id}.json`，复用 fund_sessions 模式，自动裁剪最近 10 轮，原子写入）与 `web/audit.py`（AuditDB：SQLite 审计日志 `data/audit.db`，三表 messages/anomalies/errors，只依赖标准库 sqlite3，线程安全按 db_path 独立缓存连接，WAL+NORMAL 同步）。`web/feishu_gateway.py` 的 `route_message` 新增 `chat_session_manager`/`chat_id` 参数：QA 回答前注入历史记忆、回答后保存新轮次；所有消息写入审计日志。`web/daemon.py` 接受 `audit_db`，异常推送时同步记日志。CLI `agent` 子命令自动初始化两者（纯网关/Daemon 模式均启用）。新增 tests/test_chat_session.py（12 例）+ tests/test_audit.py（10 例）+ test_feishu_gateway.py 4 例记忆注入。**537 测试通过**。
+
+`v0.33.0`：**常驻 Daemon 盘中实时化（阶段二）——定时轮询 + 异常检测 + 主动推送飞书 + 盘中实时问答快速通道**。新增 `web/monitor.py`（异常检测引擎，纯函数）：4 类规则——炸板潮（单窗口 ≥5 只 warning/≥10 只 alert）、题材爆发（同行业 ≥3 只新涨停，需行业映射）、龙头异动（空间板炸板 alert/回封 info）、情绪骤变（涨停数较上轮降 >30%）。新增 `web/daemon.py`（MarketDaemon：轮询线程默认 300s 最小 60s 与 FeishuGateway WebSocket 并行，首次轮询自动建基准+识别空间板+加载行业映射，异常推彩色卡片到 FEISHU_HOME_CHANNEL；`get_market_summary()` 盘中小结 <1s 不经 RAG）。`feishu_gateway.py` `route_message` 新增 `market_summary_fn`：问「现在/实时/当前/什么情况/市场概况/怎么样」走快速通道。CLI `agent` 新增 `--daemon`/`--poll-interval 300`。config.py 新增 `poll_interval`。新增 tests/test_monitor.py（21 例）+ test_feishu_gateway.py 6 例。**向后兼容：--daemon 缺省关闭，纯网关行为不变**。**511 测试通过**。
+
 `v0.32.0`：**飞书 Agent 网关（阶段一）——WebSocket 长连接 + 飞书群@机器人问答 + 合规边界**。新增 `web/feishu_gateway.py`：FeishuGateway 类（lark-oapi ws 模式，无需公网地址）、TokenManager（自动刷新 tenant_access_token）、send_text/send_card（支持彩色卡片消息）、route_message（消息路由→QA 系统/合规拒绝）、is_compliance_risk（交易建议关键词过滤）。CLI 新增 `agent` 子命令（`python -m daily_review agent`）。config.py 新增 `feishu_app_id`/`feishu_app_secret`/`feishu_home_channel`/`feishu_allowed_chat_ids`。合规拒绝关键词：推荐/买入/卖出/持仓/荐股等。新增 12 个测试。**484 测试通过**。
 
 `v0.31.1`：**修复开盘策略引用了「两天前」涨停池——交易日历过期判定失效（Q 面试真洞：8/20 推送引用 8/18 数据而非 8/19）**。故障背景：8/20 开盘策略推送说「79 只昨日涨停股」，实际引用的是 20260818 的池子——权威交易日历 `data/trade_calendar.csv` 只更新到 20260818，缺 8/19（周三，正常交易日）。根因① `trade_calendar.py::_is_stale()` 过期判定用「表最新日期早于 4 个自然日前」窗口太宽：8/20 时表 max=20260818、阈值=20260816，`8/18>=8/16` 判「新鲜」→ **永远不触发联网刷新**；② `recent_trade_dates("20260820",2)` 机械跳过 8/19/8/20 返回 `['20260818','20260817']`，长度满足 → `resolve_recent_trade_dates` 直接采信，探测兜底不触发 → prev_date=20260818；③ 连带 `is_trade_date("20260819")` 因「>表max」被误判「未来/未知」返回 None；④ 探测路径缓存曾把周末（20260815/16）写成交易日污染解析。修复：① `_is_stale` 改为「表最新日期 >= 昨日前最近工作日」（今天减 1 天后回退非周末）——8/20 时判过期 → `_load()` 自动联网刷新 → 上证日K 带回 8/19（盘中当天日K 未生成，表含昨日即最新，避免每次调用都刷）→ prev_date 正确回到 20260819，缺文件时实时拉取落盘；② `eastmoney_pool._resolve_trade_dates_by_probe` 新增 `_weekend()` 辅助 + 周末日期直接跳过（不探测、discard 缓存，防周末污染）；③ `tests/test_calendar.py` 补 `_fetch_kline_dates` mock（否则判过期后会真联网）并新增 TestStaleRefresh 回归（`resolve_recent_trade_dates("20260820",2)[0]` 必须是 20260819）+ TestProbeSkipsWeekend（周末不探测不写缓存）；④ `trade_calendar.is_fresh()` 新公开函数 + `resolve_recent_trade_dates` 采信判定：**日历过期（缺最近交易日）即使长度足够也不采信**，直接走涨停池探针兜底（日K 接口不可达时探针通常仍可达，避免网络受限时静默引用两天前数据）。**472 测试通过**。
@@ -89,8 +93,9 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 # 战法 ↔ SKILL.md 双向桥（import 外部 skill 转成战法；export 战法导出为 SKILL.md）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review skill import skills/fund-styles/深度价值-张坤型.md
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review skill export strategy.user-xxx --out out.skill.md
-# 飞书 Agent 网关（v0.32）：WebSocket 长连接，飞书群里@机器人提问（需先配置飞书开放平台应用）
-"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review agent [--date 20260820]
+# 飞书 Agent 网关（v0.32-0.34）：WebSocket 长连接，群里@机器人问答 + 多轮对话记忆 + SQLite 审计日志
+#   --daemon 启动盘中监控（v0.33）：定时轮询涨停池+异常检测+主动推送飞书（需 FEISHU_HOME_CHANNEL）
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review agent [--date 20260820] [--daemon] [--poll-interval 300]
 # 图形启动器（tkinter 窗口；双击根目录 启动.bat 或桌面快捷方式同效；--dry-run 自检不弹窗）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review launch --dry-run
@@ -178,6 +183,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 - 数据源定为**东方财富接口爬取**（非 akshare / tushare）。v0.3 已实现涨跌停池/资金流/概念板块（`data/eastmoney_pool.py`），v0.4 已实现龙虎榜/买卖席位（`data/eastmoney_lhb.py`）；**连板池（LB）、分时数据待实现**，详见 `docs/东财接口清单.md` 的状态列
 - 龙虎榜盘后更新：`review` 在**下午 18:00 之后**跑才包含当日龙虎榜章节；盘中/未更新日该章节自动降级为「未更新」说明
+- 飞书 Agent 阶段性边界：阶段一（v0.32 网关+合规）✓、阶段二（v0.33 盘中 Daemon 实时化）✓、阶段三（v0.34 多轮记忆+审计日志）✓；**阶段三剩余：浏览器插件（同花顺/东财页面）、微信通道扩展未做**——需求独立、不在此仓库，后续单独规划
 - 运行环境固定为 `E:/conda_envs/envs/mowan_dm`；安装依赖只进该环境或本项目文件夹
 - LLM 角色：**自动报告已实现**（DeepSeek，`llm/`）、**数据看板多日解读已实现**（`dashboard.py`，可 `--no-llm` 降级）、**交互问答已实现**（`kb/`，RAG 知识库 + 6 个数据工具 function-calling；向量路径可选，未装自动降级纯关键词）、**Web 工作台已实现**（`web/`，Flask，默认仅本机 `127.0.0.1:5000`，无认证勿暴露 LAN）
 - 首期模块：情绪温度、连板梯队、题材运行周期与归类、炸板净流入、龙虎榜游资（已实现）
