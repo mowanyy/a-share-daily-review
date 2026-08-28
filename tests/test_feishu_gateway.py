@@ -407,3 +407,140 @@ def test_handler_exception_sends_friendly_reply(monkeypatch):
     handler(_make_message_event(message_id="mid_reg3"))
     assert len(sent) == 1
     assert "稍后再试" in sent[0]
+
+
+# ---------- QA 异步补发（v0.35.6） ----------
+
+
+class _ManualFuture:
+    """手动控制的 Future：由测试决定何时完成，模拟 QA 慢/快两种路径。"""
+
+    def __init__(self):
+        self._callbacks: list = []
+        self._result = None
+        self._pending = True
+
+    def add_done_callback(self, cb):
+        if not self._pending:
+            cb(self)
+        else:
+            self._callbacks.append(cb)
+
+    def result(self, timeout=None):
+        if self._pending:
+            from concurrent.futures import TimeoutError as FTEO
+            raise FTEO("模拟 QA 未在窗口内完成")
+        return self._result
+
+    def complete(self, result):
+        self._pending = False
+        self._result = result
+        for cb in self._callbacks:
+            cb(self)
+
+
+class _ManualExecutor:
+    """替换 _QA_EXECUTOR：submit 不真正执行，返回手动 Future。"""
+
+    def __init__(self):
+        self.futures: list = []
+
+    def submit(self, fn, *args, **kwargs):
+        f = _ManualFuture()
+        self.futures.append(f)
+        return f
+
+
+def _make_result(answer):
+    from dataclasses import dataclass, field
+
+    @dataclass
+    class Result:
+        answer: str = ""
+        sources: list = field(default_factory=list)
+        tool_rounds: int = 0
+        error: str = ""
+
+    return Result(answer=answer)
+
+
+def test_async_reply_slow_path(monkeypatch):
+    """QA 超过短等待：立即回"数据整理中"，任务完成后异步补发真答案（不丢答案）。"""
+    import daily_review.web.feishu_gateway as gw
+
+    executor = _ManualExecutor()
+    monkeypatch.setattr(gw, "_QA_EXECUTOR", executor)
+
+    sent: list[str] = []
+
+    def factory():
+        return type("S", (), {"answer": lambda self, t: None, "history": []})()
+
+    reply = gw.route_message(
+        "今天涨停多少家",
+        qa_session_factory=factory,
+        async_reply_fn=sent.append,
+    )
+    assert "数据整理中" in reply
+    assert len(executor.futures) == 1
+    # 任务完成后：异步补发真答案
+    executor.futures[0].complete(_make_result("QA 回答：今日涨停 82 家"))
+    assert sent == ["QA 回答：今日涨停 82 家"]
+
+
+def test_async_reply_fast_path(monkeypatch):
+    """QA 在短等待内完成：直接返回答案，不触发异步补发。"""
+    import daily_review.web.feishu_gateway as gw
+
+    executor = _ManualExecutor()
+    monkeypatch.setattr(gw, "_QA_EXECUTOR", executor)
+
+    sent: list[str] = []
+    # 覆盖 route_message 内部 fut.result(timeout=QA_FAST_WAIT) 抛 TimeoutError 前的路径：
+    # 手动 executor 的 submit 不执行，这里直接让 future 在 result 前完成
+    class _InstantExecutor(_ManualExecutor):
+        def submit(self, fn, *args, **kwargs):
+            f = super().submit(fn, *args, **kwargs)
+            f.complete(_make_result("QA 回答：今日涨停 82 家"))
+            return f
+
+    monkeypatch.setattr(gw, "_QA_EXECUTOR", _InstantExecutor())
+
+    def factory():
+        return type("S", (), {"answer": lambda self, t: None, "history": []})()
+
+    reply = gw.route_message(
+        "今天涨停多少家",
+        qa_session_factory=factory,
+        async_reply_fn=sent.append,
+    )
+    assert "82 家" in reply
+    assert sent == []  # 未触发异步补发
+
+
+def test_async_reply_writes_session_memory(monkeypatch, tmp_path):
+    """异步补发也应写会话记忆（与同步路径一致）。"""
+    import daily_review.web.feishu_gateway as gw
+    from daily_review.web.chat_session import ChatSessionManager
+
+    m = ChatSessionManager(data_dir=tmp_path)
+    executor = _ManualExecutor()
+    monkeypatch.setattr(gw, "_QA_EXECUTOR", executor)
+
+    sent: list[str] = []
+
+    def factory():
+        return type("S", (), {"answer": lambda self, t: None, "history": []})()
+
+    gw.route_message(
+        "今天涨停多少家",
+        qa_session_factory=factory,
+        chat_session_manager=m,
+        chat_id="async_chat",
+        async_reply_fn=sent.append,
+    )
+    executor.futures[0].complete(_make_result("QA 回答：今日涨停 82 家"))
+    session = m.load("async_chat")
+    assert len(session["messages"]) == 2
+    assert session["messages"][0]["content"] == "今天涨停多少家"
+    assert session["messages"][1]["content"] == "QA 回答：今日涨停 82 家"
