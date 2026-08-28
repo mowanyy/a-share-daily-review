@@ -15,6 +15,7 @@ output/*.html
 
 # 本地配置
 .env
+.env.bak
 
 # 会话计划目录（plan mode 辅助文件，不入库）
 .zcode/
