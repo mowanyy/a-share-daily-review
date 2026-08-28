@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
+
 from daily_review.web.feishu_gateway import (
     COMPLIANCE_REPLY,
     TokenManager,
+    _handle_p2_im_message_receive,
     is_compliance_risk,
     route_message,
 )
@@ -317,3 +321,89 @@ def test_session_memory_without_manager_unchanged():
         # 不传 chat_session_manager
     )
     assert reply == "正常回答"
+
+# ---------- 消息事件 handler 回归测试（v0.35.4） ----------
+
+
+def _make_message_event(
+    message_id: str = "mid_1",
+    msg_type: str = "text",
+    text: str = "今天涨停多少家",
+    chat_id: str = "oc_test_chat",
+) -> SimpleNamespace:
+    """构造伪造的 P2ImMessageReceiveV1 事件对象（不依赖 lark_oapi 模型）。"""
+    content = json.dumps({"text": text})
+    msg = SimpleNamespace(
+        message_id=message_id,
+        message_type=msg_type,
+        content=content,
+        chat_id=chat_id,
+    )
+    return SimpleNamespace(event=SimpleNamespace(message=msg))
+
+
+def _make_handler(token_manager=None):
+    """创建不含 QA 工厂的 handler（走「简单数据查询/兜底」路由，零外部依赖）。"""
+    tm = token_manager or TokenManager("test_id", "test_secret")
+    return tm, _handle_p2_im_message_receive(tm)
+
+
+def test_handler_text_message_replies(monkeypatch):
+    """收到 text 消息 → 不抛异常 → send_text 收到回复（v0.35.1 回归：此前 L371 引用未赋值的
+    text 抛 UnboundLocalError，handler 被 except 吞掉永不回复）。"""
+    # 把 send_text 换成记录调用；route_message 保持真实（无 QA 工厂时走简单匹配/兜底）
+    sent: list[tuple] = []
+
+    def fake_send(tm, receive_id, text):
+        sent.append((receive_id, text))
+        return True
+
+    import daily_review.web.feishu_gateway as gw
+
+    monkeypatch.setattr(gw, "send_text", fake_send)
+    tm, handler = _make_handler()
+    handler(_make_message_event(message_id="mid_reg1"))
+    assert len(sent) == 1
+    assert sent[0][0] == "oc_test_chat"
+    assert "涨停" in sent[0][1] or "无法回答" in sent[0][1]
+
+
+def test_handler_cleans_at_prefix(monkeypatch):
+    """@_user_xxx 前缀应在路由前被清洗掉。"""
+    captured: dict = {}
+
+    def fake_route(text, *args, **kwargs):
+        captured["text"] = text
+        return "ok"
+
+    def fake_send(tm, receive_id, text):
+        return True
+
+    import daily_review.web.feishu_gateway as gw
+
+    monkeypatch.setattr(gw, "route_message", fake_route)
+    monkeypatch.setattr(gw, "send_text", fake_send)
+    tm, handler = _make_handler()
+    handler(_make_message_event(message_id="mid_reg2", text="@_user_101 今天涨停多少家"))
+    assert captured.get("text") == "今天涨停多少家"
+
+
+def test_handler_exception_sends_friendly_reply(monkeypatch):
+    """route_message 抛异常 → 不回抛，且向群里回一条友好提示（v0.35.4）。"""
+    def broken_route(*args, **kwargs):
+        raise RuntimeError("模拟路由异常")
+
+    sent: list[str] = []
+
+    def fake_send(tm, receive_id, text):
+        sent.append(text)
+        return True
+
+    import daily_review.web.feishu_gateway as gw
+
+    monkeypatch.setattr(gw, "route_message", broken_route)
+    monkeypatch.setattr(gw, "send_text", fake_send)
+    tm, handler = _make_handler()
+    handler(_make_message_event(message_id="mid_reg3"))
+    assert len(sent) == 1
+    assert "稍后再试" in sent[0]

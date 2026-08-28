@@ -368,7 +368,7 @@ def _handle_p2_im_message_receive(
 
             # 消息去重：根据 message_id 判断是否已处理过
             message_id = getattr(message, 'message_id', '') or ''
-            logger.info("消息 message_id=%s, text=%s", message_id, text[:30])
+            logger.info("收到消息 message_id=%s", message_id)
             if message_id and _dedup_message(message_id):
                 return
 
@@ -416,7 +416,8 @@ def _handle_p2_im_message_receive(
             )
 
             # 发送回复
-            send_text(token_manager, chat_id, reply)
+            if not send_text(token_manager, chat_id, reply):
+                logger.error("回复发送失败: chat_id=%s", chat_id)
 
             # 审计日志：助手回复
             if audit_db is not None:
@@ -427,6 +428,12 @@ def _handle_p2_im_message_receive(
             # 审计日志：错误
             if audit_db is not None and 'chat_id' in locals():
                 audit_db.log_error("gateway", type(exc).__name__, str(exc))
+            # 向群里回一条友好提示，避免「被@没反应」无法感知（发送本身失败则静默）
+            try:
+                if 'chat_id' in locals() and token_manager:
+                    send_text(token_manager, chat_id, "抱歉，刚才处理你的消息时出了点小问题，请稍后再试～")
+            except Exception:
+                pass
 
     return handler
 
