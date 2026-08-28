@@ -9,6 +9,9 @@ on:
 jobs:
   push:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +42,7 @@ jobs:
         run: PYTHONPATH=src python -m daily_review push --type review
 
       - name: Commit and push data to data-branch
+        continue-on-error: true
         run: |
           git config user.name "daily-review-bot"
           git config user.email "bot@example.com"
