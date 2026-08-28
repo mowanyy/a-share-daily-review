@@ -26,9 +26,13 @@ from daily_review.config import get_settings
 logger = logging.getLogger(__name__)
 
 # QA 超时时间（秒）
-# 推理模型（deepseek-v4-flash）思考慢，设为 120 秒；
-# 超过此时间仍未返回则回复"正在思考中"，避免 WebSocket 长连接因事件循环阻塞而断连。
-QA_TIMEOUT = 120
+# v0.35.6：改为「短等待 15s + 异步补发」——QA 在后台线程跑，超过 QA_FAST_WAIT
+# 秒未返回则立即回复"数据整理中"，任务完成后再由 worker 线程异步把真答案补发给
+# 用户（add_done_callback 在 worker 线程执行，不阻塞 lark-oapi WebSocket 事件循环）。
+# 背景：v0.35.5 缓存复用后，缓存命中的问题秒回；仅"当日首次采集"（实测 244s）会
+# 慢——此时同步死等 120s 必然超时丢答案，且 fut.result 阻塞 120s 导致 ping_timeout 断连。
+QA_FAST_WAIT = 15  # 秒：短等待，缓存命中/简单问题在此窗口内同步返回
+QA_TIMEOUT = 120   # 秒：兼容旧参数（异步补发启用后不再用于同步等待，仅保留常量）
 
 # ---------- 常量 ----------
 
@@ -214,6 +218,42 @@ def is_compliance_risk(text: str) -> bool:
     return not has_exception
 
 
+def _schedule_async_reply(
+    fut,
+    text: str,
+    chat_id: str | None,
+    chat_session_manager: object | None,
+    reply_fn: Callable[[str], None],
+) -> None:
+    """QA 任务超过短等待后转为异步补发：任务完成时在 worker 线程回调 reply_fn。
+
+    v0.35.6：add_done_callback 在 ThreadPoolExecutor 的 worker 线程执行，
+    不阻塞 lark-oapi 的 WebSocket 事件循环（handler 线程），因此不会 ping_timeout 断连。
+    reply_fn 负责发送真答案到飞书 + 写审计；失败仅记日志不回抛。
+    """
+    def _on_done(f: "object") -> None:
+        try:
+            result = f.result()
+            answer = (result.answer or "").strip() if result else ""
+        except Exception as exc:
+            logger.error("异步 QA 回答失败: %s", exc)
+            answer = ""
+        if not answer:
+            answer = "抱歉，刚才的查询没能算出结果，请换个问法再试一次～"
+        # 补发时同样维护会话记忆（与同步路径一致）
+        try:
+            if chat_session_manager is not None and chat_id is not None:
+                chat_session_manager.add_turn(chat_id, text, answer)
+        except Exception as exc:
+            logger.warning("异步补发写会话记忆失败: %s", exc)
+        try:
+            reply_fn(answer)
+        except Exception as exc:
+            logger.error("异步补发回复发送失败: %s", exc)
+
+    fut.add_done_callback(_on_done)
+
+
 # ---------- 消息路由 ----------
 
 def route_message(
@@ -223,6 +263,7 @@ def route_message(
     market_summary_fn: Callable[[], str] | None = None,
     chat_session_manager: object | None = None,
     chat_id: str | None = None,
+    async_reply_fn: Callable[[str], None] | None = None,
 ) -> str:
     """路由用户消息到合适的处理模块。
 
@@ -230,6 +271,8 @@ def route_message(
     1. 合规检查 → 拒绝
     2. 盘中实时概况（如果配置了 market_summary_fn）→ 快速返回，不经过 RAG
     3. QA 会话（如果可用）→ 调用 QA 回答（v0.34：注入多轮对话记忆）
+       v0.35.6：短等待 QA_FAST_WAIT 秒，未完成则立即回"数据整理中"，任务完成后
+       async_reply_fn(answer) 异步补发真答案（不丢答案、不阻塞 WebSocket）
     4. 数据查询 → 直接回答（简单匹配）
     5. 兜底 → 引导
 
@@ -240,6 +283,9 @@ def route_message(
         market_summary_fn: 市场概况函数，用于"现在什么情况"快速通道
         chat_session_manager: ChatSessionManager 实例，用于多轮对话记忆
         chat_id: 飞书聊天 ID，用于会话记忆的键
+        async_reply_fn: 可选回调（v0.35.6）：QA 超过短等待后由 worker 线程
+            异步补发最终答案；收到 str 参数。未传入时退化为同步等待 QA_TIMEOUT
+            后回"正在思考中"（旧行为，供非网关调用方保持兼容）。
 
     Returns:
         回复文本
@@ -264,11 +310,12 @@ def route_message(
             except Exception as exc:
                 logger.warning("市场概况获取失败: %s", exc)
 
-    # 2. QA 会话（RAG + 数据工具 function-calling），带超时保护
+    # 2. QA 会话（RAG + 数据工具 function-calling）
     #    v0.34：注入多轮对话记忆 + 保存新轮次
-    #    v0.35.1：改用全局 executor + shutdown(wait=False) 避免阻塞事件循环
-    #            （with 块退出时 shutdown(wait=True) 会等任务完成，阻塞
-    #              asyncio 事件循环导致 WebSocket ping 超时断连）
+    #    v0.35.6：短等待 + 异步补发——缓存命中的问题秒回；当日首次采集（实测
+    #    ~244s）超过 QA_FAST_WAIT 时立即回"数据整理中"，QA 完成后 worker 线程
+    #    异步把真答案发给用户。避免：①超时丢答案（用户永远只收到"我在思考中"）
+    #    ②fut.result 同步阻塞 120s 导致 lark WebSocket ping_timeout 断连。
     if qa_session_factory is not None:
         try:
             session = qa_session_factory()
@@ -278,7 +325,18 @@ def route_message(
                 if history:
                     session.history = history
             fut = _QA_EXECUTOR.submit(session.answer, text)
-            result = fut.result(timeout=QA_TIMEOUT)
+            if async_reply_fn is not None:
+                try:
+                    result = fut.result(timeout=QA_FAST_WAIT)
+                except TimeoutError:
+                    logger.warning("QA 回答超过 %d 秒，转为异步补发", QA_FAST_WAIT)
+                    _schedule_async_reply(
+                        fut, text, chat_id, chat_session_manager, async_reply_fn
+                    )
+                    return "数据整理中，我稍后把答案发给你～"
+            else:
+                # 非网关调用方（无 async_reply_fn）：保持旧行为同步等待
+                result = fut.result(timeout=QA_TIMEOUT)
             if result.answer:
                 # 保存新轮次到会话记忆
                 if chat_session_manager is not None and chat_id is not None:
@@ -405,7 +463,16 @@ def _handle_p2_im_message_receive(
             if audit_db is not None:
                 audit_db.log_message(chat_id, "user", text)
 
-            # 路由消息（v0.33：market_summary_fn；v0.34：chat_session_manager）
+            # 路由消息（v0.33：market_summary_fn；v0.34：chat_session_manager；
+            # v0.35.6：async_reply_fn——QA 超过短等待时异步补发真答案到本群）
+            def _async_reply(answer: str) -> None:
+                """QA 完成后（worker 线程）补发真答案 + 审计。"""
+                if not send_text(token_manager, chat_id, answer):
+                    logger.error("异步补发发送失败: chat_id=%s", chat_id)
+                    return
+                if audit_db is not None:
+                    audit_db.log_message(chat_id, "assistant", answer)
+
             reply = route_message(
                 text,
                 qa_session_factory,
@@ -413,6 +480,7 @@ def _handle_p2_im_message_receive(
                 market_summary_fn=market_summary_fn,
                 chat_session_manager=chat_session_manager,
                 chat_id=chat_id,
+                async_reply_fn=_async_reply,
             )
 
             # 发送回复
