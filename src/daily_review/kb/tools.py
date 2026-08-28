@@ -13,6 +13,7 @@ v0.35 插件化重构：工具通过 @register_tool 装饰器注册，自动构�
 
 from __future__ import annotations
 
+import threading
 import time
 from datetime import datetime
 from typing import Any
@@ -23,6 +24,49 @@ from daily_review.pipeline import collect, compute
 # 单次工具响应体量上限（超限截断并注明，防长池子撑爆上下文）
 ZT_POOL_CAP = 60
 THEME_MEMBERS_CAP = 30
+
+# ---------------------------------------------------------------- 进程级采集缓存池（v0.35.5）
+#
+# 故障背景：QA 工具调用每次都新建 DataToolContext（qa.py _run_loop 内），
+# 导致**每条消息都触发一次全量联网采集**（涨停池+时间线+资金流+龙虎榜，
+# 实测单次 collect 156s+compute 50s，QA_TIMEOUT=120s 必超时 → 网关永远只回
+# "我正在思考中"，用户感知为"@了不回复"）。这里改为模块级共享缓存池：
+#   - 同一进程内跨会话/跨消息复用采集与指标结果
+#   - 当日数据 TTL 限时（盘中数据会变，5 分钟过期重采）
+#   - 历史日期数据定稿，进程生命周期内永久复用
+# 锁保护：网关 QA 走 ThreadPoolExecutor，Web 端 Flask 多线程，需线程安全。
+
+_POOL_LOCK = threading.Lock()
+_COLLECT_CACHE: dict[str, tuple[float, dict]] = {}     # trade_date -> (ts, collected)
+_INDICATORS_CACHE: dict[str, tuple[float, dict]] = {}  # trade_date -> (ts, indicators)
+_TODAY_TTL = 300  # 当日数据缓存 TTL（秒）：5 分钟
+
+
+def _today_str() -> str:
+    return datetime.now().strftime("%Y%m%d")
+
+
+def _pool_fresh(trade_date: str, ts: float) -> bool:
+    """缓存是否仍新鲜：历史日期定稿永久；当日按 TTL。"""
+    if trade_date < _today_str():
+        return True
+    return (time.time() - ts) <= _TODAY_TTL
+
+
+def clear_process_cache() -> None:
+    """清空进程级采集/指标缓存池（测试隔离与手动重置用）。"""
+    with _POOL_LOCK:
+        _COLLECT_CACHE.clear()
+        _INDICATORS_CACHE.clear()
+
+
+def process_cache_stats() -> dict:
+    """缓存池状态（键数与最新命中时间），供诊断/测试断言。"""
+    with _POOL_LOCK:
+        return {
+            "collected": {k: round(ts, 1) for k, (ts, _) in _COLLECT_CACHE.items()},
+            "indicators": {k: round(ts, 1) for k, (ts, _) in _INDICATORS_CACHE.items()},
+        }
 
 # ---------------------------------------------------------------- 插件化注册表（v0.35）
 
@@ -104,25 +148,41 @@ def default_trade_date() -> str:
 
 
 class DataToolContext:
-    """按交易日的采集/指标 memo 缓存，避免同一会话内重复抓取。"""
+    """按交易日的采集/指标 memo 缓存，避免同一会话内重复抓取。
+
+    v0.35.5：采集/指标缓存升级为**进程级共享缓存池**（_POOL_LOCK/_COLLECT_CACHE/
+    _INDICATORS_CACHE）——同进程内跨会话、跨消息复用，当日数据 TTL 300s、历史
+    日期永久；实例只保留 default_date（QA 每次回答都新建 ctx 也能吃到共享缓存）。
+    """
 
     def __init__(self, default_date: str | None = None):
         self.default_date = default_date or default_trade_date()
-        self._collected: dict[str, dict] = {}
-        self._indicators: dict[str, dict] = {}
 
     def resolve_date(self, arg: str | None) -> str:
         return (arg or self.default_date).strip()
 
     def collected(self, trade_date: str) -> dict:
-        if trade_date not in self._collected:
-            self._collected[trade_date] = collect(trade_date)
-        return self._collected[trade_date]
+        with _POOL_LOCK:
+            hit = _COLLECT_CACHE.get(trade_date)
+            if hit is not None and _pool_fresh(trade_date, hit[0]):
+                return hit[1]
+        # 锁外执行网络采集（避免长耗时持锁阻塞其他线程；网关 QA 串行、Web 端多线程双采
+        # 只是浪费一次采集，不致死锁）
+        data = collect(trade_date)
+        with _POOL_LOCK:
+            _COLLECT_CACHE[trade_date] = (time.time(), data)
+        return data
 
     def indicators(self, trade_date: str) -> dict:
-        if trade_date not in self._indicators:
-            self._indicators[trade_date] = compute(self.collected(trade_date))
-        return self._indicators[trade_date]
+        with _POOL_LOCK:
+            hit = _INDICATORS_CACHE.get(trade_date)
+            if hit is not None and _pool_fresh(trade_date, hit[0]):
+                return hit[1]
+        # 锁外执行 compute + collected（同样避免嵌套持锁）
+        data = compute(self.collected(trade_date))
+        with _POOL_LOCK:
+            _INDICATORS_CACHE[trade_date] = (time.time(), data)
+        return data
 
 
 # ---------------------------------------------------------------- 数据工具（v0.7）

@@ -22,6 +22,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = PROJECT_ROOT / "prompts" / "tools" / "数据工具schema.md"
 
 
+@pytest.fixture(autouse=True)
+def _clear_tools_process_cache():
+    """v0.35.5：进程级采集缓存池跨测试隔离（前/后清空，防 mock 结果残留污染）。"""
+    tools_mod.clear_process_cache()
+    yield
+    tools_mod.clear_process_cache()
+
+
 def _tc(name, args_str, cid="call_1"):
     raw = {
         "id": cid,
@@ -141,3 +149,101 @@ def test_tool_loop_stops_at_max_rounds(monkeypatch, index):
     result = session.answer("循环问题")
     assert result.tool_rounds == qa_mod.MAX_TOOL_ROUNDS
     assert "上限" in result.answer
+
+
+# ---------- 进程级采集缓存池回归（v0.35.5） ----------
+
+
+def test_process_cache_reuse_across_instances(monkeypatch):
+    """不同 DataToolContext 实例（模拟多条消息）同一日期只采集一次。"""
+    calls = {"n": 0}
+
+    def fake_collect(date):
+        calls["n"] += 1
+        return {"trade_date": date, "zt": ["a", "b"]}
+
+    monkeypatch.setattr(tools_mod, "collect", fake_collect)
+    ctx1 = DataToolContext(default_date="20260806")
+    ctx2 = DataToolContext(default_date="20260806")  # 另一次问答的新 ctx
+    ctx1.collected("20260806")
+    ctx2.collected("20260806")
+    ctx1.collected("20260806")
+    assert calls["n"] == 1, "同日期跨实例应只采集一次"
+
+
+def test_process_cache_indicators_shared(monkeypatch):
+    """indicators 也走共享池：跨实例同日期 compute 只跑一次。"""
+    collect_calls = {"n": 0}
+    compute_calls = {"n": 0}
+
+    def fake_collect(date):
+        collect_calls["n"] += 1
+        return {"trade_date": date}
+
+    def fake_compute(collected):
+        compute_calls["n"] += 1
+        return {"ladder": {"zt_count": 42}}
+
+    monkeypatch.setattr(tools_mod, "collect", fake_collect)
+    monkeypatch.setattr(tools_mod, "compute", fake_compute)
+    ctx1 = DataToolContext(default_date="20260806")
+    ctx2 = DataToolContext(default_date="20260806")
+    assert ctx1.indicators("20260806")["ladder"]["zt_count"] == 42
+    assert ctx2.indicators("20260806")["ladder"]["zt_count"] == 42
+    assert collect_calls["n"] == 1
+    assert compute_calls["n"] == 1
+
+
+def test_process_cache_today_ttl_expiry(monkeypatch):
+    """当日数据 TTL 过期后应重新采集（历史日期永久不过期）。"""
+    calls = {"n": 0}
+
+    def fake_collect(date):
+        calls["n"] += 1
+        return {"trade_date": date}
+
+    monkeypatch.setattr(tools_mod, "collect", fake_collect)
+    today = tools_mod._today_str()
+    ctx = DataToolContext(default_date=today)
+    ctx.collected(today)
+    # 模拟缓存已过期：把时间戳改旧
+    with tools_mod._POOL_LOCK:
+        ts, data = tools_mod._COLLECT_CACHE[today]
+        tools_mod._COLLECT_CACHE[today] = (ts - tools_mod._TODAY_TTL - 1, data)
+    ctx.collected(today)
+    assert calls["n"] == 2, "当日 TTL 过期应重新采集"
+
+
+def test_process_cache_history_never_expires(monkeypatch):
+    """历史日期（<今天）定稿数据不受 TTL 影响：过期时间戳仍命中。"""
+    calls = {"n": 0}
+
+    def fake_collect(date):
+        calls["n"] += 1
+        return {"trade_date": date}
+
+    monkeypatch.setattr(tools_mod, "collect", fake_collect)
+    hist = "20260806"
+    ctx = DataToolContext(default_date=hist)
+    ctx.collected(hist)
+    with tools_mod._POOL_LOCK:
+        ts, data = tools_mod._COLLECT_CACHE[hist]
+        tools_mod._COLLECT_CACHE[hist] = (ts - 10 * 24 * 3600, data)  # 改旧 10 天
+    ctx.collected(hist)
+    assert calls["n"] == 1, "历史日期永久复用，不应重新采集"
+
+
+def test_clear_process_cache_resets_pool(monkeypatch):
+    """clear_process_cache 后同日期应重新采集。"""
+    calls = {"n": 0}
+
+    def fake_collect(date):
+        calls["n"] += 1
+        return {"trade_date": date}
+
+    monkeypatch.setattr(tools_mod, "collect", fake_collect)
+    ctx = DataToolContext(default_date="20260806")
+    ctx.collected("20260806")
+    tools_mod.clear_process_cache()
+    ctx.collected("20260806")
+    assert calls["n"] == 2
