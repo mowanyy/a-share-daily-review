@@ -1,26 +1,9 @@
-[agent] 交易日: 20260820
+[agent] 交易日: 20260828
 [agent] 初始化知识库...
-[agent] 知识库就绪: 393 个片段
+[agent] 知识库就绪: 398 个片段
+[agent] 多轮对话记忆已就绪
+[agent] 审计日志已就绪: E:\workspace\AI应用工具\每日复盘\data\audit.db
 [agent] 启动飞书 WebSocket 网关...
 [feishu] 飞书 Agent 网关已启动，等待消息...
-[Lark] [2026-08-20 17:16:04,012] [INFO] connected to wss://msg-frontier.feishu.cn/ws/v2?fpid=493&aid=552564&device_id=7676040041333132493&access_key=7ff17c460d803755c95c22b4219add24&service_id=33554678&ticket=b34f6a12-0107-4c7c-b6ac-b1b8de9da980 [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:16:04,013] [DEBUG] ping success [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:16:04,072] [DEBUG] receive pong [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:17:34,019] [DEBUG] ping success [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:17:34,076] [DEBUG] receive pong [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:19:04,021] [DEBUG] ping success [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:19:04,075] [DEBUG] receive pong [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:20:34,028] [DEBUG] ping success [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:20:34,094] [DEBUG] receive pong [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:22:04,029] [DEBUG] ping success [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:22:04,086] [DEBUG] receive pong [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:23:34,036] [DEBUG] ping success [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:23:34,097] [DEBUG] receive pong [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:25:04,037] [DEBUG] ping success [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:25:04,094] [DEBUG] receive pong [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:26:34,043] [DEBUG] ping success [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:26:34,101] [DEBUG] receive pong [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:28:04,050] [DEBUG] ping success [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:28:04,110] [DEBUG] receive pong [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:29:34,056] [DEBUG] ping success [conn_id=7676040041333132493]
-[Lark] [2026-08-20 17:29:34,119] [DEBUG] receive pong [conn_id=7676040041333132493]
+[Lark] [2026-08-28 16:50:34,115] [INFO] connected to wss://msg-frontier.feishu.cn/ws/v2?fpid=493&aid=552564&device_id=7679002188060445633&access_key=9b4c63af7e4614e047513cf55acde2f1&service_id=33554678&ticket=7719d086-2530-4c7c-8e88-9bd0b985434e [conn_id=7679002188060445633]
+QA 回答超过 15 秒，转为异步补发
