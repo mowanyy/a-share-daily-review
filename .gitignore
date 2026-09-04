@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# 数据与输出（下载的数据/生成的复盘不入库，目录占位 .gitkeep 保留）
+data/*/
+data/*.db
+data/*.db-wal
+data/*.db-shm
+output/*/
+output/*.md
+output/*.html
+*.csv
+
+# 本地配置
+.env
+.env.bak
+pat.txt
+
+# 会话计划目录（plan mode 辅助文件，不入库）
+.zcode/
+
+# 问答模式：向量模型与知识库缓存（不入库；knowledge/ 本身入库）
+models/
+.kb_cache/
+
+# 概念池自动同步的镜像（权威数据在 data/stock_pool/concepts/，已由 data/*/ 覆盖）
+knowledge/概念池/

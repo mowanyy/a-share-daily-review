@@ -1,0 +1,40 @@
+name: push-plan-report
+
+on:
+  schedule:
+    # 北京时间 07:30（UTC 前一日 23:30），周日~周四（UTC）⇒ 周一~周五（北京）：
+    # GitHub Actions 排程可能迟到 30-60 分钟，提早触发对冲延迟，保证 9:00 预案窗口前到。
+    - cron: '30 23 * * 0-4'
+  workflow_dispatch: {}
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pandas requests
+
+      - name: Cache data directory
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
+      - name: Push overnight plan
+        env:
+          # v0.35.3：只用官方 DeepSeek（DEEPSEEK_FALLBACK_API_KEY secret 存的就是官方 key，
+          # 直接借用作主 key；去掉商汤 SenseNova 主用 + DeepSeek 兜底的双配置）
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_FALLBACK_API_KEY }}
+          LLM_BASE_URL: https://api.deepseek.com
+          LLM_MODEL: deepseek-chat
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+        run: PYTHONPATH=src python -m daily_review push --type plan

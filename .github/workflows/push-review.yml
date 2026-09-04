@@ -1,0 +1,52 @@
+name: push-review-report
+
+on:
+  schedule:
+    # 北京时间 18:00（UTC 10:00），周一~周五，盘后复盘推送
+    - cron: '0 10 * * 1-5'
+  workflow_dispatch: {}
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pandas requests
+
+      - name: Cache data directory
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
+      - name: Push review report
+        env:
+          # v0.35.3：只用官方 DeepSeek（DEEPSEEK_FALLBACK_API_KEY secret 存的就是官方 key，
+          # 直接借用作主 key；去掉商汤 SenseNova 主用 + DeepSeek 兜底的双配置）
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_FALLBACK_API_KEY }}
+          LLM_BASE_URL: https://api.deepseek.com
+          LLM_MODEL: deepseek-chat
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+        run: PYTHONPATH=src python -m daily_review push --type review
+
+      - name: Commit and push data to data-branch
+        continue-on-error: true
+        run: |
+          git config user.name "daily-review-bot"
+          git config user.email "bot@example.com"
+          git fetch origin data-branch 2>/dev/null || true
+          git checkout -b data-branch origin/data-branch 2>/dev/null || git checkout --orphan data-branch
+          git add -f data/ output/
+          git commit -m "chore(data): auto-save $(date '+%Y%m%d') data and reports" || echo "No changes to commit"
+          git push --force origin data-branch

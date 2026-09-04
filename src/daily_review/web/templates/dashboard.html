@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}数据看板 · 每日复盘{% endblock %}
+{% block content %}
+<h1>数据看板</h1>
+<div class="panel">
+  <div class="row">
+    <div><label>交易日</label><input type="text" id="dDate" placeholder="YYYYMMDD"></div>
+    <div><label>近 N 个交易日</label><input type="text" id="dDays" value="10"></div>
+    <div><label>LLM 多日解读</label><input type="checkbox" id="dLlm" style="width:auto"></div>
+    <button class="btn primary" id="btnDash">生成看板</button>
+  </div>
+  <div class="muted">近 N 日趋势图表 + 趋势摘要 + 成分拆解 + 梯队/题材/炸板/龙虎榜，与页面融为一体。LLM 解读需 DEEPSEEK_API_KEY。</div>
+  <div id="dashLoading" class="muted" style="display:none;margin-top:8px;color:var(--accent)">
+    正在生成看板（联网采集行情数据），首次约需 1–2 分钟，之后秒开…
+  </div>
+</div>
+<iframe id="frame" title="数据看板" style="display:none;width:100%;border:1px solid var(--border);border-radius:10px;background:var(--bg)"></iframe>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var frame = document.getElementById('frame');
+var loading = document.getElementById('dashLoading');
+
+function frameSrc(){
+  var date = document.getElementById('dDate').value.trim();
+  var days = document.getElementById('dDays').value.trim() || '10';
+  var noLlm = document.getElementById('dLlm').checked ? '0' : '1';
+  var q = 'no_llm=' + noLlm + '&days=' + encodeURIComponent(days);
+  if(date){ q += '&date=' + encodeURIComponent(date); }
+  return '/api/dashboard/view?' + q;
+}
+/* 看板与页面融为一体：同源 iframe 测量内容高度，随内容自动撑高，消除内部双滚动条。
+   短内容（如 400 错误 JSON）也给出最小高度，避免留 920px 大空白框。 */
+function fitFrame(){
+  try{
+    var h = frame.contentWindow.document.documentElement.scrollHeight;
+    frame.style.height = (h > 100 ? h : 100) + 'px';
+  }catch(e){}
+}
+/* 窗口缩放/内容重排后重新测高：看板 SVG 随宽度缩放、表格随行数增高，高度会变化，
+   单靠 onload 三次定时测高不够（无 resize 监听时底部表格行会被裁/留空白）。 */
+window.addEventListener('resize', function(){ fitFrame(); });
+function loadDash(){
+  loading.style.display = '';
+  frame.style.display = 'none';
+  frame.src = frameSrc();
+}
+frame.onload = function(){
+  loading.style.display = 'none';
+  frame.style.display = '';
+  fitFrame();
+  setTimeout(fitFrame, 300);
+  setTimeout(fitFrame, 800);
+};
+document.getElementById('btnDash').onclick = function(){ userTouched = true; loadDash(); };
+/* 用户已手动操作（改字段/点生成）后，不再用异步回填的日期/LLM 默认值覆盖，避免竞态吞掉用户输入 */
+var userTouched = false;
+function markUser(){ userTouched = true; }
+document.getElementById('dDate').addEventListener('input', markUser);
+document.getElementById('dDays').addEventListener('input', markUser);
+document.getElementById('dLlm').addEventListener('change', markUser);
+/* 首屏：日期（优先 ?date= 预填，否则回填最近交易日）+ LLM 默认勾选（配置了 key 才默认开）都就绪后再加载 */
+var preDate = (location.search.match(/[?&]date=(\d{8})/) || [])[1] || '';
+var dateP;
+if(preDate){
+  document.getElementById('dDate').value = preDate;
+  dateP = Promise.resolve();
+}else{
+  dateP = api('/api/review/recent_date').then(function(d){
+    if(!userTouched){ document.getElementById('dDate').value = d.date; }
+  }).catch(function(){});
+}
+var llmP = api('/api/config/llm').then(function(d){
+  if(!userTouched){ document.getElementById('dLlm').checked = !!d.configured; }
+}).catch(function(){});
+Promise.all([dateP, llmP]).then(function(){ if(!userTouched){ loadDash(); } });
+</script>
+{% endblock %}

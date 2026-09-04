@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+{% block title %}问答 · 每日复盘{% endblock %}
+{% block content %}
+<h1>问答与基金经理分析</h1>
+<div class="row" style="align-items:flex-start">
+  <div style="flex:1.4;min-width:0">
+    <div class="panel">
+      <div class="row">
+        <input type="text" id="q" style="flex:1" placeholder="例如：什么是炸板率？今日连板梯队如何？">
+        <button class="btn primary" id="btnAsk">提问</button>
+      </div>
+      <div class="muted" id="qaHint">
+        RAG 短线知识库（prompts + 文档 + 个人知识 + 个人战法）+ 6 个数据工具（连板梯队 / 题材 / 炸板资金流 / 涨跌停池等）。
+      </div>
+    </div>
+    <div class="panel" id="answer" hidden>
+      <div id="answerBody"></div>
+      <div class="muted" id="rounds" style="margin-top:6px"></div>
+      <h2>出处</h2>
+      <div id="sources"></div>
+    </div>
+  </div>
+  <div style="flex:1;min-width:0">
+    <div class="panel">
+      <h2 style="margin-top:0">基金经理分析</h2>
+      <p class="muted">独立风格 agent，带上下文记忆 + 中军自动识别（从涨停池按市值取大市值股）。</p>
+      <div class="row">
+        <select id="fmSelect" style="flex:1"></select>
+        <select id="fmKlt" style="flex:0 0 90px">
+          <option value="102">周K（每周一）</option>
+          <option value="103">月K（每月1号）</option>
+        </select>
+      </div>
+      <div class="muted" id="fmDesc" style="margin-top:4px"></div>
+      <div class="muted" id="fmZhongjun" style="margin-top:2px;color:var(--down)">中军：待分析</div>
+      <div id="fmHistory" style="max-height:420px;overflow-y:auto;margin:8px 0;
+        border:1px solid var(--border);border-radius:8px;padding:8px"></div>
+      <div class="row">
+        <input type="text" id="fmQ" style="flex:1" placeholder="例：分析 600519 的估值分位（可自动注入中军周K数据）">
+        <button class="btn primary" id="fmAsk">分析</button>
+        <button class="btn" id="fmClear">清空记忆</button>
+      </div>
+      <div class="muted" id="fmNotes" style="margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+<div class="panel" style="margin-top:16px">
+  <h2 style="margin-top:0">多 Agent 会诊 <span class="muted" style="font-weight:normal;font-size:0.85em">（v0.20：多个 Agent 分别分析，综合观点）</span></h2>
+  <p class="muted">勾选你想咨询的 Agent，系统会分别调用每个 Agent 分析同一问题，然后综合各方观点输出最终结论。</p>
+  <div class="row">
+    <input type="text" id="consultQ" style="flex:1" placeholder="例：如何看待当前 AI 板块？市场情绪如何？">
+    <button class="btn primary" id="btnConsult">会诊</button>
+  </div>
+  <div id="consultAgents" style="margin:8px 0;display:flex;flex-wrap:wrap;gap:6px"></div>
+  <div id="consultResult" hidden>
+    <div id="consultResponses"></div>
+    <div id="consultSynthesis" style="border:1px solid var(--accent);border-radius:8px;padding:12px;margin-top:8px"></div>
+  </div>
+  <div class="muted" id="consultNotes" style="margin-top:4px"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function ask(){
+  var q = document.getElementById('q').value.trim();
+  if(!q) return;
+  document.getElementById('btnAsk').disabled = true;
+  document.getElementById('answer').hidden = false;
+  document.getElementById('answerBody').textContent = '思考中…';
+  document.getElementById('sources').textContent = '';
+  api('/api/qa/ask', {method:'POST', body:JSON.stringify({question:q})})
+    .then(function(d){
+      document.getElementById('answerBody').innerHTML = d.answer_html || esc(d.answer);
+      document.getElementById('rounds').textContent = d.tool_rounds
+        ? '（调用了 ' + d.tool_rounds + ' 轮数据工具）' : '';
+      var src = d.sources || [];
+      document.getElementById('sources').innerHTML = src.map(function(h){
+        return '<div class="muted" style="margin-bottom:8px;white-space:pre-wrap">['
+          + esc(h.source_rel) + ' · ' + esc(h.section) + ']' + (h.date ? ' · ' + esc(h.date) : '')
+          + '<br>' + esc(h.text) + '</div>';
+      }).join('') || '<span class="muted">（无检索出处）</span>';
+      if(d.error){ document.getElementById('rounds').textContent = '（LLM 异常：' + esc(d.error) + '）'; }
+      document.getElementById('btnAsk').disabled = false;
+    })
+    .catch(function(e){
+      document.getElementById('answerBody').textContent = '';
+      alert(e.message);
+      document.getElementById('btnAsk').disabled = false;
+    });
+}
+document.getElementById('btnAsk').onclick = ask;
+document.getElementById('q').addEventListener('keydown', function(ev){
+  if(ev.key === 'Enter') ask();
+});
+document.getElementById('q').focus();
+
+/* ---------- 基金经理分析（v0.19：上下文 + 中军 + 历史对话） ---------- */
+var fmHistory = [];  // [{user, answer_html, data_notes, error}]
+var fmManagerId = '';
+
+function showManagerDesc(){
+  var sel = document.getElementById('fmSelect');
+  var opt = sel.options[sel.selectedIndex];
+  document.getElementById('fmDesc').textContent = opt && opt.dataset.desc ? opt.dataset.desc : '';
+}
+function renderZhongjun(zj){
+  if(!zj || !zj.length){
+    document.getElementById('fmZhongjun').textContent = '中军：待分析（需先跑复盘采集涨停数据）';
+    return;
+  }
+  document.getElementById('fmZhongjun').textContent = '中军：' + zj.map(function(e){
+    var cap = e.market_cap ? (e.market_cap / 1e8).toFixed(1) + '亿' : '?';
+    return esc(e.code) + ' ' + esc(e.name) + '(' + esc(e.theme_name) + '，' + cap + ')';
+  }).join(' · ');
+}
+function renderFmHistory(){
+  var el = document.getElementById('fmHistory');
+  if(!fmHistory.length){
+    el.innerHTML = '<span class="muted">暂无对话，开始提问吧。</span>';
+    return;
+  }
+  el.innerHTML = fmHistory.map(function(h, i){
+    var notes = '';
+    if(h.data_notes && h.data_notes.length){
+      notes = '<div class="muted" style="margin:2px 0">' + esc(h.data_notes.join(' · ')) + '</div>';
+    }
+    if(h.error){ notes += '<div class="err">LLM 异常：' + esc(h.error) + '</div>'; }
+    return '<div style="margin-bottom:10px;border-bottom:1px solid var(--border);padding-bottom:8px">'
+      + '<div style="margin-bottom:4px"><strong>你：</strong>' + esc(h.user) + '</div>'
+      + '<div><strong>agent：</strong>' + (h.answer_html || esc(h.answer)) + '</div>'
+      + notes + '</div>';
+  }).join('');
+  el.scrollTop = el.scrollHeight;
+}
+function loadFmSession(){
+  var mid = document.getElementById('fmSelect').value;
+  if(!mid) return;
+  fmManagerId = mid;
+  api('/api/fund/session/' + mid)
+    .then(function(d){
+      renderZhongjun(d.zhongjun || []);
+    })
+    .catch(function(){});
+}
+function loadManagers(){
+  api('/api/fund/managers')
+    .then(function(d){
+      var sel = document.getElementById('fmSelect');
+      sel.innerHTML = (d.managers || []).map(function(m){
+        return '<option value="' + esc(m.id) + '" data-desc="' + esc(m.description) + '">'
+          + esc(m.name) + '</option>';
+      }).join('');
+      if(sel.options.length){ showManagerDesc(); loadFmSession(); }
+    })
+    .catch(function(){});
+}
+function fundAsk(){
+  var q = document.getElementById('fmQ').value.trim();
+  var mid = document.getElementById('fmSelect').value;
+  if(!mid){ alert('请先选择基金经理'); return; }
+  if(!q){ alert('请输入问题'); return; }
+  var klt = document.getElementById('fmKlt').value;
+  document.getElementById('fmAsk').disabled = true;
+  document.getElementById('fmNotes').textContent = '';
+  api('/api/fund/analyze', {
+    method:'POST',
+    body:JSON.stringify({manager_id: mid, question: q, klt: Number(klt), trade_date: ''})
+  })
+    .then(function(d){
+      document.getElementById('fmQ').value = '';
+      renderZhongjun(d.zhongjun || []);
+      fmHistory.push({
+        user: q,
+        answer_html: d.answer_html || esc(d.answer),
+        data_notes: d.data_notes || [],
+        error: d.error || ''
+      });
+      renderFmHistory();
+      var txt = (d.data_notes || []).join(' · ');
+      if(d.error){ txt = (txt ? txt + ' · ' : '') + 'LLM 异常：' + d.error; }
+      document.getElementById('fmNotes').textContent = txt;
+      document.getElementById('fmAsk').disabled = false;
+    })
+    .catch(function(e){
+      alert(e.message);
+      document.getElementById('fmAsk').disabled = false;
+    });
+}
+function fundClear(){
+  if(!fmManagerId) return;
+  fmHistory = [];
+  document.getElementById('fmHistory').innerHTML = '<span class="muted">暂无对话，开始提问吧。</span>';
+  document.getElementById('fmNotes').textContent = '';
+  document.getElementById('fmZhongjun').textContent = '中军：待分析';
+  document.getElementById('fmQ').value = '';
+  api('/api/fund/clear/' + fmManagerId, {method:'POST'}).catch(function(){});
+}
+document.getElementById('fmAsk').onclick = fundAsk;
+document.getElementById('fmQ').addEventListener('keydown', function(ev){
+  if(ev.key === 'Enter') fundAsk();
+});
+document.getElementById('fmClear').onclick = fundClear;
+document.getElementById('fmSelect').onchange = function(){
+  showManagerDesc();
+  fmHistory = [];
+  loadFmSession();
+  renderFmHistory();
+};
+loadManagers();
+
+/* ---------- 多 Agent 会诊（v0.20） ---------- */
+function loadConsultAgents(){
+  api('/api/agents/list')
+    .then(function(d){
+      var agents = d.agents || [];
+      var el = document.getElementById('consultAgents');
+      if(!agents.length){
+        el.innerHTML = '<span class="muted">暂无可用 Agent</span>';
+        return;
+      }
+      el.innerHTML = agents.map(function(a){
+        return '<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg2)">'
+          + '<input type="checkbox" value="' + esc(a.id) + '" checked>'
+          + esc(a.name) + '<span class="muted" style="font-size:0.85em">' + esc(a.description) + '</span></label>';
+      }).join('');
+    })
+    .catch(function(){});
+}
+function consult(){
+  var q = document.getElementById('consultQ').value.trim();
+  if(!q){ alert('请输入问题'); return; }
+  var checks = document.querySelectorAll('#consultAgents input[type=checkbox]:checked');
+  var agentIds = Array.from(checks).map(function(c){ return c.value; });
+  if(!agentIds.length){ alert('请至少勾选一个 Agent'); return; }
+  document.getElementById('btnConsult').disabled = true;
+  document.getElementById('consultResult').hidden = false;
+  document.getElementById('consultResponses').innerHTML = '<span class="muted">各 Agent 分析中…</span>';
+  document.getElementById('consultSynthesis').innerHTML = '';
+  document.getElementById('consultNotes').textContent = '';
+  api('/api/agents/consult', {
+    method:'POST',
+    body:JSON.stringify({question: q, agent_ids: agentIds})
+  })
+    .then(function(d){
+      var respHtml = '';
+      Object.keys(d.responses || {}).forEach(function(aid){
+        var r = d.responses[aid];
+        respHtml += '<div style="margin:8px 0;padding:8px;border:1px solid var(--border);border-radius:8px">'
+          + '<strong>' + esc(aid) + '</strong> 的分析：<br>'
+          + (r.answer_html || esc(r.answer)) + '</div>';
+      });
+      document.getElementById('consultResponses').innerHTML = respHtml;
+      document.getElementById('consultSynthesis').innerHTML = d.synthesis_html
+        ? '<h3 style="margin:0 0 8px;color:var(--accent)">综合结论</h3>' + d.synthesis_html
+        : esc(d.synthesis || '');
+      document.getElementById('consultNotes').textContent = d.error || '';
+      document.getElementById('btnConsult').disabled = false;
+    })
+    .catch(function(e){
+      alert(e.message);
+      document.getElementById('btnConsult').disabled = false;
+    });
+}
+document.getElementById('btnConsult').onclick = consult;
+document.getElementById('consultQ').addEventListener('keydown', function(ev){
+  if(ev.key === 'Enter') consult();
+});
+loadConsultAgents();
+</script>
+{% endblock %}

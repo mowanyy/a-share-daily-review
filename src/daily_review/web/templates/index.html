@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}工作台 · 每日复盘{% endblock %}
+{% block content %}
+<div class="panel">
+  <h1>每日复盘 · Web 工作台</h1>
+  <p class="muted">
+    超短连板收盘复盘：采集东财行情 → 指标（情绪温度 / 连板梯队 / 题材周期 / 炸板净流入 / 龙虎榜游资）
+    → DeepSeek 生成七章复盘报告。个人战法经「战法管理」页面上传后，可在跑复盘时指定，
+    驱动「七、次日预案」按你的战法输出。
+  </p>
+</div>
+<div class="panel">
+  <h2>快速入口</h2>
+  <div class="row">
+    <a class="btn primary" href="/review">跑一次复盘</a>
+    <a class="btn" href="/strategies">管理个人战法</a>
+    <a class="btn" href="/qa">知识库问答</a>
+    <a class="btn" href="/dashboard">数据看板</a>
+  </div>
+</div>
+<div class="panel">
+  <h2>CLI 对照</h2>
+  <pre>python -m daily_review review --date 20260806 --no-llm
+python -m daily_review review --date 20260806 --strategy strategy.user-xxx
+python -m daily_review qa --ask "什么是炸板率？" --no-embedding
+python -m daily_review dashboard --date 20260806 --no-llm --open
+python -m daily_review web --port 5000 --open</pre>
+  <p class="muted">提示：涨停数据 15:00 后完整、龙虎榜 17:30 后完整、情绪温度需近 5 日时序；盘后 17:30 之后跑最完整。</p>
+</div>
+{% endblock %}

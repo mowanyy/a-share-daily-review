@@ -1,0 +1,39 @@
+name: push-open-report
+
+on:
+  # 09:25 开盘策略由本机 Windows 计划任务准点推送（v0.22，见 docs/飞书推送说明.md「本地准点推送」）
+  # GitHub Actions 排程会迟到（实测 30-60 分钟），对竞价后即时策略不合格，故摘除 schedule；
+  # 保留 workflow_dispatch 作为出差/手动云端补发兜底（Actions 页 → Run workflow）。
+  workflow_dispatch: {}
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install pandas requests
+
+      - name: Cache data directory
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
+      - name: Push open strategy
+        env:
+          # v0.35.3：只用官方 DeepSeek（DEEPSEEK_FALLBACK_API_KEY secret 存的就是官方 key，
+          # 直接借用作主 key；去掉商汤 SenseNova 主用 + DeepSeek 兜底的双配置）
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_FALLBACK_API_KEY }}
+          LLM_BASE_URL: https://api.deepseek.com
+          LLM_MODEL: deepseek-chat
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+        run: PYTHONPATH=src python -m daily_review push --type open
