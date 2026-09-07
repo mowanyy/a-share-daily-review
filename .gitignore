@@ -13,6 +13,8 @@ data/*.db-shm
 output/*/
 output/*.md
 output/*.html
+# 运行日志（飞书网关/计划任务日志含 WS access_key/ticket 等会话凭证，严禁入库，v0.35.7 安全修复）
+output/*.log
 *.csv
 
 # 本地配置

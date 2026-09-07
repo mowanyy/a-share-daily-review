@@ -47,6 +47,8 @@ jobs:
           git config user.email "bot@example.com"
           git fetch origin data-branch 2>/dev/null || true
           git checkout -b data-branch origin/data-branch 2>/dev/null || git checkout --orphan data-branch
+          # v0.35.7 安全修复：日志文件含飞书 WS access_key/ticket 等会话凭证，入库即泄露（GitHub 告警源头），提交前必须清除
+          find output -name '*.log' -delete
           git add -f data/ output/
           git commit -m "chore(data): auto-save $(date '+%Y%m%d') data and reports" || echo "No changes to commit"
           git push --force origin data-branch
