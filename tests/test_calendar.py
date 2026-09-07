@@ -129,8 +129,14 @@ class TestStaleRefresh:
         assert cal.recent_trade_dates("20260820", 2) == ["20260819", "20260818"]
 
     def test_resolve_prev_trade_date_regression(self, tmp_path, monkeypatch):
-        """resolve_recent_trade_dates("20260820", 2) 必须返回 8/19（此前错误返回 8/18）。"""
+        """resolve_recent_trade_dates("20260820", 2) 必须返回 8/19（此前错误返回 8/18）。
+
+        v0.35.7：mock is_fresh=True 强制走日历路径——原用例隐式依赖「真实日期贴近
+        8/20」使 is_fresh 判 seed 表新鲜；真实日期推移后判过期而走探测路径
+        （探测从 start 含回推，返回 8/20 本身）导致误挂。
+        """
         self._seed_old_table(tmp_path, monkeypatch)
+        monkeypatch.setattr(cal, "is_fresh", lambda: True)
         dates = em.resolve_recent_trade_dates("20260820", n_days=2)
         assert dates[0] == "20260819", f"prev 日期应为 8/19，实际 {dates}"
 
