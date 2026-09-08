@@ -28,6 +28,18 @@ def _sanitize_name(name: str) -> str:
     return s.strip("._ ") or "未命名"
 
 
+def _csv_safe(value: str) -> str:
+    """CSV 公式注入转义（v0.36.3 安全加固）。
+
+    Excel 打开 CSV 时，以 `= + - @` 或制表符/回车开头的单元格会被当作公式执行
+    （用户/LLM 输入的 name/note 可被注入）。前置单引号禁用公式语义。
+    """
+    s = str(value or "")
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
+
+
 def _path(name: str) -> Path:
     d = pool_dir()
     d.mkdir(parents=True, exist_ok=True)
@@ -134,9 +146,9 @@ def add_stocks(name: str, stocks: list[dict]) -> dict:
             continue
         new_rows.append({
             "code": code,
-            "name": str(s.get("name", "")).strip(),
+            "name": _csv_safe(str(s.get("name", "")).strip()),
             "added_date": today,
-            "note": str(s.get("note", "")).strip(),
+            "note": _csv_safe(str(s.get("note", "")).strip()),
         })
         existing.add(code)
         added += 1

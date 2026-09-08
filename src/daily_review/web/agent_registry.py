@@ -17,6 +17,32 @@ from typing import Callable
 _registry: dict[str, "AgentInfo"] = {}
 _registry_lock = threading.Lock()
 
+# 跨 Agent 调用深度上限（v0.36.3 安全加固）：
+# QA 的 query_agent 工具可调基金经理，基金经理的 query_qa 工具可调回 QA——
+# 两层各自有轮数上限，但**嵌套时没有全局深度防护**，恶意提问可诱导
+# 「QA→基金经理→QA→…」无限递归，每层嵌套都翻倍消耗 LLM 调用（烧 API 额度）。
+# 这里用线程级深度计数：嵌套超过 MAX_AGENT_DEPTH 层直接中止调用链。
+MAX_AGENT_DEPTH = 3
+_DEPTH_TOO_DEEP_MSG = "（Agent 调用链过深（超过 %d 层），已中止以避免循环调用）" % MAX_AGENT_DEPTH
+
+# 线程级调用深度（threading.local：不同线程独立计数）
+_depth_local = threading.local()
+
+
+def _current_depth() -> int:
+    return getattr(_depth_local, "depth", 0)
+
+
+def _enter_agent() -> int:
+    """进入一层 Agent 调用，返回进入后的深度（> MAX_AGENT_DEPTH 表示已超限）。"""
+    depth = _current_depth() + 1
+    _depth_local.depth = depth
+    return depth
+
+
+def _exit_agent() -> None:
+    _depth_local.depth = max(0, _current_depth() - 1)
+
 
 @dataclass
 class AgentInfo:
@@ -44,16 +70,26 @@ def list_agents() -> list[dict]:
 
 
 def call_agent(agent_id: str, question: str, context: dict | None = None) -> str:
-    """调用一个 Agent，返回文本回答。未知 Agent 或失败返回错误说明。"""
-    with _registry_lock:
-        agent = _registry.get(agent_id)
-    if agent is None:
-        available = ", ".join(_registry)
-        return f"（未知 agent：{agent_id}，可用：{available}）"
+    """调用一个 Agent，返回文本回答。未知 Agent 或失败返回错误说明。
+
+    v0.36.3：深度防护——Agent 间可互相调用（QA↔基金经理），嵌套深度超过
+    MAX_AGENT_DEPTH 时中止并返回提示，防止无限递归烧 LLM 额度。
+    """
+    if _enter_agent() > MAX_AGENT_DEPTH:
+        _exit_agent()
+        return _DEPTH_TOO_DEEP_MSG
     try:
-        return agent.handler(question, context or {})
-    except Exception as exc:
-        return f"（调用 {agent.name} 失败：{type(exc).__name__}: {exc}）"
+        with _registry_lock:
+            agent = _registry.get(agent_id)
+        if agent is None:
+            available = ", ".join(_registry)
+            return f"（未知 agent：{agent_id}，可用：{available}）"
+        try:
+            return agent.handler(question, context or {})
+        except Exception as exc:
+            return f"（调用 {agent.name} 失败：{type(exc).__name__}: {exc}）"
+    finally:
+        _exit_agent()
 
 
 # ---------------------------------------------------------------- 共享 KnowledgeIndex

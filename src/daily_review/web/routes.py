@@ -24,10 +24,34 @@ from daily_review.web.strategy import (
     update as strategy_update,
 )
 
+# v0.36.3 安全加固：Web 端合规提示 + LLM 端点限流
+# is_compliance_risk / COMPLIANCE_REPLY 为 feishu_gateway 的纯函数/常量（模块顶层
+# 不 import lark，无循环依赖）——与飞书网关同款合规关键词，Web 端三处 LLM 端点统一复用。
+from daily_review.web.feishu_gateway import COMPLIANCE_REPLY, is_compliance_risk
+from daily_review.web.ratelimit import limiter
+
+# Web 端回答统一追加的免责声明（产品合规：不构成投资建议）
+WEB_DISCLAIMER = "\n\n> 以上内容基于公开数据分析，仅供学习参考，不构成任何投资建议。股市有风险，投资需谨慎。"
+_RATE_LIMIT_MSG = "请求过于频繁，请稍后再试"
+
 pages_bp = Blueprint("pages", __name__)
 api_bp = Blueprint("api", __name__)
 
 _DATE_RE = re.compile(r"^\d{8}$")
+
+
+def _compliance_refusal(question: str) -> str | None:
+    """Web 端合规拦截（v0.36.3）：命中交易建议关键词 → 拒绝话术（含免责声明），否则 None。"""
+    if is_compliance_risk(question):
+        return COMPLIANCE_REPLY + WEB_DISCLAIMER
+    return None
+
+
+def _too_many(endpoint: str):
+    """LLM 端点限流（v0.36.3）：窗口内超限返回 429 响应，否则 None。"""
+    if not limiter(endpoint).allow():
+        return jsonify({"error": _RATE_LIMIT_MSG}), 429
+    return None
 
 
 def _recent_date() -> str:
@@ -397,6 +421,24 @@ def api_fund_analyze():
         return jsonify({"error": "缺少 manager_id"}), 400
     if not question:
         return jsonify({"error": "问题不能为空"}), 400
+
+    # v0.36.3 合规拦截 + 限流
+    refusal = _compliance_refusal(question)
+    if refusal:
+        return jsonify(
+            {
+                "answer": refusal,
+                "answer_html": md_to_html(refusal),
+                "data_notes": [],
+                "error": None,
+                "history_length": 0,
+                "zhongjun": [],
+            }
+        )
+    limited = _too_many("fund")
+    if limited:
+        return limited
+
     try:
         klt = int(data.get("klt", 102) or 102)
     except (TypeError, ValueError):
@@ -408,10 +450,13 @@ def api_fund_analyze():
         return jsonify({"error": str(exc)}), 404
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    answer = (result["answer"] or "").strip()
+    if answer:
+        answer += WEB_DISCLAIMER
     return jsonify(
         {
-            "answer": result["answer"],
-            "answer_html": md_to_html(result["answer"]),
+            "answer": answer,
+            "answer_html": md_to_html(answer),
             "data_notes": result["data_notes"],
             "error": result["error"],
             "history_length": result["history_length"],
@@ -467,6 +512,14 @@ def api_agents_consult():
     if not agent_ids or not isinstance(agent_ids, list):
         return jsonify({"error": "请选择至少一个 Agent（agent_ids 列表）"}), 400
 
+    # v0.36.3 合规拦截：问题含交易建议关键词 → 直接拒绝（不调 Agent/LLM）
+    refusal = _compliance_refusal(question)
+    if refusal:
+        return jsonify({"responses": {}, "synthesis": refusal, "synthesis_html": md_to_html(refusal)})
+    limited = _too_many("consult")
+    if limited:
+        return limited
+
     # 去重（保持传入顺序）
     agent_ids = list(dict.fromkeys(agent_ids))
 
@@ -479,11 +532,15 @@ def api_agents_consult():
     # 顺序调用每个 Agent（不并行，避免 LLM 并发冲突）
     responses: dict[str, dict] = {}
     for aid in agent_ids:
-        answer = call_agent(aid, question)
+        answer = (call_agent(aid, question) or "").strip()
+        if answer:
+            answer += WEB_DISCLAIMER
         responses[aid] = {"answer": answer, "answer_html": md_to_html(answer)}
 
     # 合成 LLM 调用
-    synthesis = _synthesize_consult(question, responses)
+    synthesis = (_synthesize_consult(question, responses) or "").strip()
+    if synthesis:
+        synthesis += WEB_DISCLAIMER
     synthesis_html = md_to_html(synthesis)
 
     return jsonify({"responses": responses, "synthesis": synthesis, "synthesis_html": synthesis_html})
@@ -543,15 +600,34 @@ def api_qa_ask():
     if not question:
         return jsonify({"error": "问题不能为空"}), 400
 
+    # v0.36.3 合规拦截 + 限流：拒绝话术免费放行，正常回答才消耗 LLM 配额
+    refusal = _compliance_refusal(question)
+    if refusal:
+        return jsonify(
+            {
+                "answer": refusal,
+                "answer_html": md_to_html(refusal),
+                "sources": [],
+                "tool_rounds": 0,
+                "error": None,
+            }
+        )
+    limited = _too_many("qa")
+    if limited:
+        return limited
+
     from daily_review.kb.qa import QASession
 
     index = _get_index()
     trade_date = str(data.get("date", "")).strip() or _recent_date()
     session = QASession(index, trade_date=trade_date, top_k=5, use_embedding=True)
     result = session.answer(question)
+    answer = (result.answer or "").strip()
+    if answer:
+        answer += WEB_DISCLAIMER
     resp = {
-        "answer": result.answer,
-        "answer_html": md_to_html(result.answer),
+        "answer": answer,
+        "answer_html": md_to_html(answer),
         "sources": [
             {
                 "source_rel": h.source_rel,

@@ -435,3 +435,110 @@ def test_host_header_guard(app):
 def test_app_has_secret_key(app):
     """SECRET_KEY 已配置（默认进程内随机，可用环境变量覆盖）。"""
     assert app.secret_key and len(app.secret_key) >= 16
+
+
+# ---------------------------------------------------------------- v0.36.3 安全加固：跨源 / 限流 / 合规
+
+
+def test_cross_origin_guard(app):
+    """恶意跨源 Origin/Referer 被 403；本机同源 Origin / 无头请求（curl/脚本）放行。"""
+    c = app.test_client()
+    # 恶意网页跨源 POST（Origin 为攻击站点）→ 403，handler 不执行
+    r = c.post(
+        "/api/strategies",
+        json={"name": "evil", "markdown": "## 1\nx"},
+        headers={"Origin": "https://evil.example.com"},
+    )
+    assert r.status_code == 403
+    # Referer 同样校验
+    r = c.post(
+        "/api/strategies",
+        json={"name": "evil", "markdown": "## 1\nx"},
+        headers={"Referer": "https://evil.example.com/page"},
+    )
+    assert r.status_code == 403
+    # 本机同源 Origin 放行
+    r = c.post(
+        "/api/strategies",
+        json={"name": "同源", "markdown": "## 1\nx"},
+        headers={"Origin": "http://127.0.0.1:5000"},
+    )
+    assert r.status_code == 201, r.get_data(as_text=True)
+    # 无 Origin/Referer（curl / 本地脚本）放行——不破坏非浏览器调用
+    r = c.post("/api/strategies", json={"name": "无头", "markdown": "## 1\nx"})
+    assert r.status_code == 201
+    # GET 带本机 Referer（页面自身请求）放行
+    assert c.get("/", headers={"Referer": "http://localhost:5000/"}).status_code == 200
+
+
+def test_llm_rate_limit_returns_429(app, monkeypatch):
+    """LLM 端点窗口内超限 → 429（防本机脚本刷爆 DeepSeek 额度）；clear_limits 后恢复。"""
+    import daily_review.web.ratelimit as rl_mod
+    import daily_review.web.routes as routes_mod
+    from daily_review.web.ratelimit import clear_limits
+
+    # 注入限额=2 且重建限流器（测试确定性，不依赖环境变量/历史状态）
+    monkeypatch.setattr(rl_mod, "default_limit", lambda: 2)
+    monkeypatch.setattr(rl_mod, "_LIMITERS", {})
+
+    # 打桩 consult 内部调用（避免真实 LLM/Agent/网络）——handler 内导入 call_agent，
+    # 直接 patch agent_registry 模块属性
+    import daily_review.web.agent_registry as ar_mod
+
+    monkeypatch.setattr(ar_mod, "call_agent", lambda aid, q: "回答")
+    monkeypatch.setattr(routes_mod, "_synthesize_consult", lambda q, r: "综合")
+
+    c = app.test_client()
+    payload = {"question": "市场如何？", "agent_ids": ["qa_general"]}
+    assert c.post("/api/agents/consult", json=payload).status_code == 200
+    assert c.post("/api/agents/consult", json=payload).status_code == 200
+    assert c.post("/api/agents/consult", json=payload).status_code == 429
+    # 清空限流状态后恢复
+    clear_limits()
+    assert c.post("/api/agents/consult", json=payload).status_code == 200
+
+
+def test_ratelimit_sliding_window_unit():
+    """滑动窗口限流器单元：窗口内限额、窗口滑动后自动恢复。"""
+    from daily_review.web.ratelimit import SlidingWindowLimiter
+
+    lim = SlidingWindowLimiter(limit=3, window_seconds=60)
+    assert lim.allow() and lim.allow() and lim.allow()
+    assert lim.allow() is False
+    assert lim.remaining() == 0
+    lim.reset()
+    assert lim.allow() is True
+
+
+def test_qa_compliance_refusal(app):
+    """Web QA 命中交易建议关键词 → 合规拒绝话术（含免责声明），不调 LLM/不消耗限流。"""
+    r = app.test_client().post("/api/qa/ask", json={"question": "推荐一只股票吧"})
+    assert r.status_code == 200
+    d = r.get_json()
+    assert "无法给出具体建议" in d["answer"]
+    assert "不构成任何投资建议" in d["answer"]
+    assert d["sources"] == []
+    assert d["tool_rounds"] == 0
+
+
+def test_fund_compliance_refusal(app):
+    """基金经理分析命中交易建议关键词 → 合规拒绝（不查经理/不调 LLM）。"""
+    r = app.test_client().post(
+        "/api/fund/analyze", json={"manager_id": "whatever", "question": "帮我推荐买入"}
+    )
+    assert r.status_code == 200
+    d = r.get_json()
+    assert "无法给出具体建议" in d["answer"]
+    assert d["history_length"] == 0
+    assert d["zhongjun"] == []
+
+
+def test_consult_compliance_refusal(app):
+    """多 Agent 会诊命中交易建议关键词 → 合规拒绝（不调任何 Agent）。"""
+    r = app.test_client().post(
+        "/api/agents/consult", json={"question": "推荐买入哪只？", "agent_ids": ["qa_general"]}
+    )
+    assert r.status_code == 200
+    d = r.get_json()
+    assert "无法给出具体建议" in d["synthesis"]
+    assert d["responses"] == {}

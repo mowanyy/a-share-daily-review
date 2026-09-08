@@ -4,12 +4,14 @@
 - 每个 app 实例挂独立的 JobManager / DashboardCache（app.extensions["jobs"] / ["dashboard_cache"]，测试隔离）
 - 注册 pages/api 两个 blueprint；模板目录 = web/templates/（零 CDN，深色主题）
 - v0.36.2 安全加固：SECRET_KEY + Host 头校验（防 DNS rebinding 打到本地端口）
+- v0.36.3 安全加固：Origin/Referer 跨源校验（防恶意网页直接向本机端口发请求）
 """
 
 from __future__ import annotations
 
 import os
 import secrets
+from urllib.parse import urlsplit
 
 from flask import Flask, jsonify, request
 
@@ -46,6 +48,26 @@ def create_app() -> Flask:
             host = raw.split(":", 1)[0]
         if host not in _ALLOWED_HOSTS:
             return jsonify({"error": "非法 Host 头"}), 400
+
+    @app.before_request
+    def _guard_cross_origin() -> None:
+        """跨源请求校验（v0.36.3）：浏览器发起的跨源请求带 Origin/Referer 头。
+
+        Host 白名单只防 DNS rebinding（恶意域名解析到 127.0.0.1），但防不住恶意
+        网页**直接**向 http://127.0.0.1:5000 发请求（此时 Host 头就是 127.0.0.1，
+        检查会通过）。浏览器跨源请求必然携带 Origin（或至少 Referer），校验其
+        host 是否为本机回环地址即可拦下这类 CSRF 式攻击：
+        - Origin/Referer 存在 → host 必须在本机白名单内，否则 403
+        - 两者皆无（curl / 本地脚本 / CLI 非浏览器调用）→ 放行，不破坏现有用法
+        """
+        origin = (request.headers.get("Origin") or "").strip()
+        referer = (request.headers.get("Referer") or "").strip()
+        source = origin or referer
+        if not source:
+            return None
+        host = (urlsplit(source).hostname or "").lower()
+        if host not in _ALLOWED_HOSTS:
+            return jsonify({"error": "跨源请求被拒绝"}), 403
 
     from daily_review.web.routes import api_bp, pages_bp
 

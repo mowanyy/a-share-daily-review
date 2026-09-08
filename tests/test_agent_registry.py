@@ -359,3 +359,69 @@ def app(tmp_path, monkeypatch):
     app = create_app()
     app.config["TESTING"] = True
     return app
+
+# ---------------------------------------------------------------- 跨 Agent 递归深度防护（v0.36.3）
+
+
+class TestAgentDepthGuard:
+    """QA↔基金经理互相调用时必须有全局深度上限，防止无限递归烧 LLM 额度。"""
+
+    def _register_mutual(self, ar):
+        """注册两个互相调用的假 agent（不触 LLM）。"""
+        with ar._registry_lock:
+            ar._registry["depth_a"] = ar.AgentInfo(
+                "depth_a", "A", "互调测试", lambda q, ctx: ar.call_agent("depth_b", q)
+            )
+            ar._registry["depth_b"] = ar.AgentInfo(
+                "depth_b", "B", "互调测试", lambda q, ctx: ar.call_agent("depth_a", q)
+            )
+
+    def _unregister(self, ar, *names):
+        with ar._registry_lock:
+            for n in names:
+                ar._registry.pop(n, None)
+
+    def test_mutual_recursion_terminates(self):
+        """互调递归必须在 MAX_AGENT_DEPTH 内终止，返回深度提示而非栈溢出/永不返回。"""
+        from daily_review.web import agent_registry as ar
+
+        self._register_mutual(ar)
+        try:
+            result = ar.call_agent("depth_a", "问题")
+        finally:
+            self._unregister(ar, "depth_a", "depth_b")
+        assert "调用链过深" in result
+
+    def test_depth_guard_restores_after_call(self):
+        """递归中止后线程深度归零（finally 递减），后续普通调用不受影响。"""
+        from daily_review.web import agent_registry as ar
+
+        self._register_mutual(ar)
+        with ar._registry_lock:
+            ar._registry["depth_ok"] = ar.AgentInfo(
+                "depth_ok", "OK", "正常", lambda q, ctx: "正常回答"
+            )
+        try:
+            ar.call_agent("depth_a", "问题")
+            assert ar._current_depth() == 0
+            assert ar.call_agent("depth_ok", "q") == "正常回答"
+        finally:
+            self._unregister(ar, "depth_a", "depth_b", "depth_ok")
+
+    def test_normal_call_depth_one(self):
+        """普通单层调用深度为 1，深度防护不误伤正常调用。"""
+        from daily_review.web import agent_registry as ar
+
+        seen = {}
+
+        def _handler(q, ctx):
+            seen["depth"] = ar._current_depth()
+            return "ok"
+
+        with ar._registry_lock:
+            ar._registry["depth_single"] = ar.AgentInfo("depth_single", "S", "单层", _handler)
+        try:
+            assert ar.call_agent("depth_single", "q") == "ok"
+        finally:
+            self._unregister(ar, "depth_single")
+        assert seen["depth"] == 1

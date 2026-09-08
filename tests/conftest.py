@@ -87,3 +87,13 @@ def index(kb_root):
     idx = KnowledgeIndex(kb_root, use_embedding=False)
     idx.ensure_ready(force=True)
     return idx
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    """每个测试前后清空 Web LLM 端点限流状态（v0.36.3：防跨测试计数污染）。"""
+    from daily_review.web.ratelimit import clear_limits
+
+    clear_limits()
+    yield
+    clear_limits()
