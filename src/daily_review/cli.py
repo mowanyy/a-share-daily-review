@@ -5,7 +5,7 @@
   python -m daily_review realtime --codes 600601,002398,600789
   python -m daily_review review --date 20260806 --no-llm
   python -m daily_review review            # 缺省探测最近交易日，需 .env 配置 DEEPSEEK_API_KEY
-  python -m daily_review dashboard --date 20260806 --no-llm --open
+  python -m daily_review dashboard --date 20260806 --open
   python -m daily_review dashboard         # 近 10 个交易日，缺省探测最近交易日
   python -m daily_review qa                # 交互问答（RAG 知识库 + 数据工具），无 key 也可跑
   python -m daily_review qa --ask "什么是炸板率？" --no-embedding
@@ -161,6 +161,11 @@ def _cmd_review(args) -> None:
 
     save_review_snapshot(indicators, trade_date)
     _print_summary(indicators)
+
+    # 附写图表看板（失败不阻断）；Web 打开 /dashboard 可秒开
+    from daily_review.dashboard import try_pregenerate_dashboard
+
+    try_pregenerate_dashboard(trade_date)
 
     if args.no_llm:
         print("\n已跳过 LLM 报告（--no-llm）；数据与指标已就绪")
@@ -880,12 +885,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_dash = sub.add_parser(
         "dashboard",
-        help="数据看板：近 N 日趋势图表（单文件 HTML）+ LLM 多日解读",
+        help="数据看板：近 N 日 KPI + 趋势图表（单文件 HTML，无 AI 文案）",
     )
     p_dash.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
     p_dash.add_argument("--days", type=int, default=10, help="近 N 个交易日（默认 10）")
     p_dash.add_argument(
-        "--no-llm", action="store_true", help="跳过 LLM 多日趋势解读（看板照常渲染）"
+        "--no-llm",
+        action="store_true",
+        help="（兼容保留）看板已默认无 LLM，此开关无实际效果",
     )
     p_dash.add_argument(
         "--open", action="store_true", help="生成后用系统默认浏览器打开"

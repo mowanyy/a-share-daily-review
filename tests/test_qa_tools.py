@@ -247,3 +247,64 @@ def test_clear_process_cache_resets_pool(monkeypatch):
     tools_mod.clear_process_cache()
     ctx.collected("20260806")
     assert calls["n"] == 2
+
+
+# ---------------------------------------------------------------- v0.36.2 安全修复：日期参数路径穿越
+
+
+def test_resolve_date_rejects_traversal():
+    """非法 trade_date（穿越/非 YYYYMMDD）一律拒绝，不触碰文件系统。"""
+    from daily_review.kb.tools import DataToolContext
+
+    ctx = DataToolContext(default_date="20260806")
+    bad = [r"..\..\evil", "../evil", "20260101/../x", "2026-01-01", "202601011", "2026", " ", "..%2F..%2Ffoo"]
+    for d in bad:
+        with pytest.raises(ValueError):
+            ctx.resolve_date(d)
+    # 合法日期原样返回
+    assert ctx.resolve_date("20260806") == "20260806"
+    assert ctx.resolve_date(None) == "20260806"
+
+
+def test_execute_tool_bad_date_no_network_no_fs(monkeypatch):
+    """工具收到穿越日期 → error 返回，且 collect/repo 均不被调用（无网络无落盘）。"""
+    from daily_review.data import repo as repo_mod
+    from daily_review.kb.tools import DataToolContext, execute_tool
+
+    monkeypatch.setattr(tools_mod, "collect", lambda *a, **k: pytest.fail("collect 不应被调用"))
+    monkeypatch.setattr(repo_mod, "load_csv", lambda *a, **k: pytest.fail("load_csv 不应被调用"))
+    ctx = DataToolContext(default_date="20260806")
+    out, _ = execute_tool("query_zt_pool", {"trade_date": r"..\..\evil"}, ctx)
+    assert "error" in out and "YYYYMMDD" in out
+
+
+def test_repo_date_dir_rejects_traversal(tmp_path, monkeypatch):
+    """repo._date_dir / save_csv / load_csv 单点拦截非 YYYYMMDD 日期。"""
+    import daily_review.data.repo as repo
+    from daily_review.config import Settings
+
+    monkeypatch.setattr(repo, "get_settings", lambda: Settings(data_dir=tmp_path))
+    import pandas as pd
+
+    with pytest.raises(ValueError):
+        repo.save_csv(pd.DataFrame(), "zt_pool", r"..\..\evil")
+    with pytest.raises(ValueError):
+        repo.load_csv("zt_pool", "../evil")
+    with pytest.raises(ValueError):
+        repo._date_dir("2026-01-01")
+    # 合法日期正常
+    assert repo._date_dir("20260806").name == "20260806"
+    # 穿越尝试不得在任何层级留下 evil 目录（Windows 反斜杠/正斜杠均拦截）
+    assert not (tmp_path / "evil").exists()
+    assert not (tmp_path.parent / "evil").exists()
+
+
+def test_execute_tool_error_no_args_echo(monkeypatch):
+    """工具异常回包不再回显 args（防参数原样注入 LLM 上下文）。"""
+    from daily_review.kb.tools import DataToolContext, execute_tool
+
+    monkeypatch.setattr(tools_mod, "collect", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    ctx = DataToolContext(default_date="20260806")
+    out, _ = execute_tool("query_zt_pool", {"trade_date": "20260806"}, ctx)
+    assert "boom" in out
+    assert '"args"' not in out

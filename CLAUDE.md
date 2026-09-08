@@ -8,6 +8,12 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.36.2`：**安全加固（AI 安全工程师全库审计 + 修复）**——Web 输入净化与供应链加固，新增 12 例回归测试，**587 测试通过**。审计结论：无 RCE / 注入类高危；XSS（md_to_html 全转义）、SQLi（全参数化）、命令注入（无 shell=True）、SSRF（host 硬编码）、密钥泄露面（v0.35.7 已清历史）经查均已防御。修复项：① **fund_agent 会话路径穿越（中高）**——`data/fund_sessions/{manager_id}.json` 直接拼文件名，`GET /api/fund/session/<id>` / `POST /api/fund/clear/<id>` 可经 `%2F` 编码 `../` 读/删项目内任意 `.json`；`_session_path` 增白名单 `^[\w\-]{1,64}$`（含中文经理名），非法 id 抛 `ManagerNotFound`，两路由捕获返 404。② **数据日期目录穿越（中）**——`repo._date_dir` / `DataToolContext.resolve_date` 此前不校验格式，QA 工具 trade_date（LLM 可控参数）可带 `..\`（Windows 路径分隔符）在项目外建目录/读写 CSV；两处统一 `^\d{8}$` 拦截，非法值工具返回 error 不落盘。③ **chat_session chat_id 白名单（纵深防御）**——同型修复 `^[\w\-]{1,64}$`，非法抛 ValueError 不触碰文件。④ **kb 向量器 pickle 指纹校验（防反序列化 RCE）**——`manifest.json` 记录 `tfidf.pkl` sha256，`load()` 验指纹后再 `pickle.load`，篡改/旧缓存→触发重建。⑤ 低危加固：审计 API limit 钳制 `[1,200]`（非数字回落默认，负数不再无界查询）；`review.html` data_update 日志 innerHTML 转义 `esc()`；`execute_tool` 异常回包去掉 `args` 回显；`create_app` 设 SECRET_KEY（`FLASK_SECRET_KEY` 环境变量或进程随机）+ `before_request` Host 白名单（127.0.0.1/localhost/::1，防 DNS rebinding）。⑥ **GitHub Actions 供应链**——三个 push workflow 的 `actions/checkout`/`setup-python`/`cache` 锁 commit SHA（tag 可重定向），`pip install -r requirements.txt`（补 pin `lark-oapi==1.7.3`，此前 `>=3.0.0` 未锁版本）。
+
+`v0.36.1`：**看板轻量采集加速**。图表看板不再走全量 `collect`（资金流/龙虎榜/概念/行业映射等与图表无关的网络请求被砍掉）。新增 `pipeline.collect_dashboard` / `compute_dashboard`：仅拉 N 日涨停/炸板/跌停池（`_cached` 磁盘优先）+ `compute_emotion` + KPI 标量；`generate_dashboard` 与 Web `_generate_dashboard_html` 改走轻量路径。冷启动从约 1–2 分钟压到「仅池子请求」量级（有 CSV 时接近秒开）；复盘全量采集契约不变。
+
+`v0.36.0`：**数据看板图表化 + 打开即见**。去掉 AI「多日趋势解读」与连板/题材/炸板/龙虎榜明细面板，看板收成紧凑交易视图：KPI 卡片 + 2×2 SVG 趋势图 + 趋势摘要表 + 情绪成分拆解（桌面双列）。Web `/dashboard` 去掉「生成看板」按钮与 LLM 勾选，打开页自动加载；改日/改 N 防抖刷新。缓存 key 简化为 `(date, days)`，定稿边界 18:00→15:00（已无龙虎榜章节）。复盘成功后（CLI / Web jobs / push）`try_pregenerate_dashboard` 预写 `output/{date}_看板.html`，失败不阻断主流程，二次打开秒开。`module.dashboard` prompt 标 `deprecated`。
+
 `v0.35.7`：**安全修复——GitHub Secret Scanning 告警（Generic High Entropy Secret）：飞书 WS access_key/ticket 泄露**。GitHub 2026-09-07 03:39 UTC 告警仓库历史含飞书 WebSocket 长连接凭证（32 位 hex `access_key` + UUID `ticket`）。根因：`output/agent_gateway.log`（飞书网关日志，8/20 v0.33 起被误跟踪入库——日志打印了 lark-oapi WS 长连接 URL 的 access_key 与 ticket 会话凭证）与 `output/scheduled_push_open.log`；且 9/4 起 `push-review.yml` 的 data-branch 提交步骤 `git add -f data/ output/` 把本机日志连同仓库原样强推上 `data-branch`（孤儿提交，blob 与本机文件 hash 完全一致），GitHub 检测器扫到后告警。**风险评级：低～中**——access_key/ticket 是**短时效会话凭证**（连接断开/重连即换新，8/20 与 8/28 两批均已过期），续期需 app_id+app_secret，而 `.env`（FEISHU_APP_SECRET、DeepSeek key）从未入库（全历史 diff-filter=A 校验），攻击者无法续期。修复：① `git rm --cached` 两日志 + `.gitignore` 增 `output/*.log`（严禁再入库）；② `push-review.yml` data-branch 提交步骤在 add 前 `find output -name '*.log' -delete`；③ `git filter-branch` 重写 main 历史摘除两日志文件（65 提交全量重写，`git rev-list` 全历史扫描已无任何 access_key）；④ 删除远端 `data-branch`（泄露分支，下次 workflow 重建即干净）。**用户侧待办**：GitHub → Security → Secret scanning 告警详情确认定位并标记"已修复"（access_key/ticket 已过期**无需轮换**；`.env` 未泄露**可不重置** FEISHU_APP_SECRET）。
 
 `v0.35.6`：**飞书网关 QA 短等待 + 异步补发真答案（「被@不回复」第三层根因，联调验证通过）**。v0.35.5 缓存复用后剩余两问：①首次问答（当日数据全量采集 ~244s）超时丢答案，用户只收到"我正在思考中"；②handler 里 `fut.result(timeout=120)` 同步阻塞 120s 致 lark-oapi WebSocket `ping_timeout` 断连（实测 15:54:34/15:57:56 两次）。修复（`web/feishu_gateway.py`）：① `route_message` 新增 `async_reply_fn` 参数——QA 提交到 `_QA_EXECUTOR` 后先 `fut.result(timeout=QA_FAST_WAIT=15s)` 短等待，**缓存命中/简单问题 15s 内直接返回真答案**；超过 15s 立即回复「数据整理中，我稍后把答案发给你～」并 `_schedule_async_reply` 挂 `fut.add_done_callback`（回调在 worker 线程执行，不阻塞 handler/事件循环），**任务完成后自动把真答案补发给用户**（补发同样写会话记忆 + 审计）；② handler 传入 `async_reply_fn` 闭包（send_text + audit_db.log_message）；③ 未传 `async_reply_fn` 的调用方退化为旧同步等待 `QA_TIMEOUT=120` 行为（兼容测试）。实测（2026-08-28 16:55-16:59）：用户 @ 提问 → 16 秒收"数据整理中" → 3.5 分钟后自动收到完整涨停分析（82 家/连板 18/空间板深中华A 7板），**日志零 ping_timeout、零断连**。新增 3 例回归测试（慢路径异步补发不丢答案 / 快路径 15s 内秒回 / 异步补发写会话记忆），共 **574 测试通过**。
@@ -96,8 +102,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review review --date 20260806 --strategy strategy.user-xxx
 # Web 工作台（Flask）：战法管理 / 跑复盘看报告与次日预案 / 问答 / 数据看板（默认仅本机 127.0.0.1:5000；--open 用系统浏览器打开）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review web --open
-# 数据看板：近 10 个交易日趋势（单文件 output/{date}_看板.html）+ LLM 多日趋势解读（--no-llm 跳过解读）
-"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806 --no-llm
+# 数据看板：近 10 个交易日 KPI + 趋势图表（单文件 output/{date}_看板.html，无 AI 文案；复盘后预写秒开）
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806 --open
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard          # 缺省探测最近交易日
 # 交互问答：RAG 短线知识库 + 数据工具（--ask 一次性提问，缺省进 REPL；--no-embedding 纯关键词）
@@ -180,7 +186,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `system.analyst` | `prompts/system/复盘分析师.md` | draft |
 | `system.assistant` | `prompts/system/问答助手.md` | draft |
 | `module.emotion` | `prompts/modules/情绪温度.md` | draft |
-| `module.dashboard` | `prompts/modules/数据看板.md` | draft |
+| `module.dashboard` | `prompts/modules/数据看板.md` | deprecated |
 | `module.ladder` | `prompts/modules/连板梯队.md` | draft |
 | `module.theme` | `prompts/modules/题材周期与归类.md` | draft |
 | `module.break` | `prompts/modules/炸板净流入.md` | draft |
@@ -200,8 +206,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 - 龙虎榜盘后更新：`review` 在**下午 18:00 之后**跑才包含当日龙虎榜章节；盘中/未更新日该章节自动降级为「未更新」说明
 - 飞书 Agent 阶段性边界：阶段一（v0.32 网关+合规）✓、阶段二（v0.33 盘中 Daemon 实时化）✓、阶段三（v0.34 多轮记忆+审计日志）✓；**阶段三剩余：浏览器插件（同花顺/东财页面）、微信通道扩展未做**——需求独立、不在此仓库，后续单独规划
 - 运行环境固定为 `E:/conda_envs/envs/mowan_dm`；安装依赖只进该环境或本项目文件夹
-- LLM 角色：**自动报告已实现**（DeepSeek，`llm/`）、**数据看板多日解读已实现**（`dashboard.py`，可 `--no-llm` 降级）、**交互问答已实现**（`kb/`，RAG 知识库 + 6 个数据工具 function-calling；向量路径可选，未装自动降级纯关键词）、**Web 工作台已实现**（`web/`，Flask，默认仅本机 `127.0.0.1:5000`，无认证勿暴露 LAN）
+- LLM 角色：**自动报告已实现**（DeepSeek，`llm/`）、**数据看板为纯图表（v0.36，无 AI 文案）**、**交互问答已实现**（`kb/`，RAG 知识库 + 6 个数据工具 function-calling；向量路径可选，未装自动降级纯关键词）、**Web 工作台已实现**（`web/`，Flask，默认仅本机 `127.0.0.1:5000`，无认证勿暴露 LAN）
 - 首期模块：情绪温度、连板梯队、题材运行周期与归类、炸板净流入、龙虎榜游资（已实现）
-- 数据看板：近 N 日趋势图表单文件 HTML（`output/{date}_看板.html`，不入库）+ 趋势摘要表 + 情绪温度成分拆解 + LLM 多日趋势解读；历史数据缺日时该日按缺数据标记，看板照常渲染；Web 端带进程内缓存+文件复用+错误兜底（见上方 v0.10 修复说明）
+- 数据看板：近 N 日 KPI + SVG 趋势图 + 趋势摘要/情绪成分表（`output/{date}_看板.html`）；打开即见、复盘预写秒开；无 LLM；历史缺日按缺数据标记照常渲染
 - **个人战法**（v0.8 已实现）：两条路径——① tracked 种子示例 `prompts/strategies/`（`strategy.template/example`，只读，禁改/禁删，登记者 `prompts/INDEX.md`）；② **用户 UI 上传**落盘 `data/strategies/`（gitignored `data/*/` 已覆盖，**不入库**），id 自动 `strategy.user-<sha256(name)[:10]>`，驱动 `review --strategy <id>` 与 Web 复盘任务的次日预案（`module.plan` + 战法正文注入）
 - 未来：策略回测 / 更多数据工具 / 登录鉴权（工作台目前仅 localhost 无认证）

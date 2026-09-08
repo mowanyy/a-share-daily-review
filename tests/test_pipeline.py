@@ -180,3 +180,104 @@ class TestRepoSaveCsvAtomic:
             repo.save_csv(pd.DataFrame({"code": [f"{i:06d}"]}), "zb_pool", "20260806")
         back = pd.read_csv(tmp_path / "data" / "20260806" / "zb_pool.csv", dtype={"code": str})
         assert back["code"].tolist() == ["000002"]
+
+
+def _pool_df(date: str, codes: list[str], *, lb: int = 1) -> pd.DataFrame:
+    return pd.DataFrame({
+        "trade_date": [date] * len(codes),
+        "code": codes,
+        "name": [f"N{c}" for c in codes],
+        "lb_num": [lb] * len(codes),
+        "first_limit_time": ["09:30:00"] * len(codes),
+        "open_times": [0] * len(codes),
+        "seal_amount": [1e8] * len(codes),
+        "industry": ["电子"] * len(codes),
+    })
+
+
+class TestCollectDashboard:
+    def test_skips_moneyflow_lhb_concept(self, monkeypatch):
+        """轻量采集不得触发资金流 / 龙虎榜 / 概念 / 行业映射。"""
+        import daily_review.pipeline as pipe
+        from daily_review.pipeline import collect_dashboard
+
+        calls: list[str] = []
+
+        def track(name):
+            def _inner(*a, **k):
+                calls.append(name)
+                raise AssertionError(f"看板轻量路径不应调用 {name}")
+            return _inner
+
+        monkeypatch.setattr(pipe.em, "fetch_moneyflow", track("fetch_moneyflow"))
+        monkeypatch.setattr(pipe.em, "fetch_stock_industry_map", track("fetch_stock_industry_map"))
+        monkeypatch.setattr(pipe.em, "fetch_concept_boards", track("fetch_concept_boards"))
+        monkeypatch.setattr(pipe.eastmoney_lhb, "fetch_lhb_daily", track("fetch_lhb_daily"))
+        monkeypatch.setattr(pipe.eastmoney_lhb, "fetch_lhb_seats", track("fetch_lhb_seats"))
+
+        monkeypatch.setattr(pipe.em, "resolve_recent_trade_dates",
+                            lambda start, n_days=5: ["20260806", "20260805", "20260804"][:n_days])
+
+        def fake_cached(name, trade_date, fetch_fn, *, use_cache=True):
+            if name == "zt_pool":
+                return _pool_df(trade_date, ["000001"], lb=3 if trade_date == "20260806" else 2)
+            return pd.DataFrame(columns=["trade_date", "code"])
+
+        def fake_fetch_opt(name, trade_date, fetch_fn, *, use_cache=True):
+            if name == "zb_pool":
+                return _pool_df(trade_date, ["600001"]), True
+            return _pool_df(trade_date, []), True
+
+        monkeypatch.setattr(pipe, "_cached", fake_cached)
+        monkeypatch.setattr(pipe, "_fetch_opt", fake_fetch_opt)
+
+        out = collect_dashboard("20260806", n_days=3)
+        assert calls == []
+        assert out["trade_date"] == "20260806"
+        assert len(out["zt"]) == 1
+        assert [h["date"] for h in out["hist_days"]] == ["20260804", "20260805"]  # 旧→新
+        assert "moneyflow" not in out
+        assert "lhb_daily" not in out
+        assert "concept_map" not in out
+
+
+class TestComputeDashboard:
+    def test_emotion_and_kpi_drive_trend(self, monkeypatch):
+        from daily_review.dashboard import _assemble_payload, build_trend, render_html
+        from daily_review.pipeline import compute_dashboard
+
+        collected = {
+            "trade_date": "20260806",
+            "zt": _pool_df("20260806", ["000001", "000002"], lb=5).assign(
+                lb_num=[5, 1]
+            ),
+            "zb": _pool_df("20260806", ["600001"]),
+            "dt": _pool_df("20260806", []),
+            "hist_days": [
+                {
+                    "date": "20260805",
+                    "zt": _pool_df("20260805", ["000001"], lb=4),
+                    "zb": _pool_df("20260805", []),
+                    "dt": _pool_df("20260805", []),
+                    "zb_ok": True, "dt_ok": True,
+                },
+            ],
+            "zb_ok": True,
+            "dt_ok": True,
+            "is_intraday": False,
+            "timeline_dates": ["20260806", "20260805"],
+        }
+        indicators = compute_dashboard(collected)
+        assert "emotion" in indicators
+        assert indicators["ladder"]["zt_count"] == 2
+        assert indicators["ladder"]["lianban_count"] == 1
+        assert indicators["ladder"]["max_lb"] == 5
+        assert "themes" not in indicators
+        assert "break" not in indicators
+        assert "lhb" not in indicators
+
+        trend = build_trend(collected, indicators, n_days=2)
+        payload = _assemble_payload(indicators, trend, collected)
+        html = render_html(payload)
+        assert "const DATA =" in html
+        assert "数据看板" in html

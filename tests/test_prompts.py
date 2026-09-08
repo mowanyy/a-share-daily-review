@@ -18,7 +18,7 @@ def test_all_prompt_files_have_required_front_matter():
         assert p.role in {"report", "qa", "strategy", "tool", "example", "glossary"}, (
             f"[{p.path}] role 非法: {p.role}"
         )
-        assert p.status in {"draft", "active"}, f"[{p.path}] status 非法: {p.status}"
+        assert p.status in {"draft", "active", "deprecated"}, f"[{p.path}] status 非法: {p.status}"
 
 
 def test_prompt_ids_unique():

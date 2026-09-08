@@ -22,7 +22,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from daily_review.config import PROJECT_ROOT
 from daily_review.kb import embedding
 from daily_review.kb.corpus import Chunk, chunk_file, discover_sources, file_sha256
-from daily_review.kb.manifest import Manifest
+from daily_review.kb.manifest import Manifest, sha256_file
 
 _log = logging.getLogger("daily_review.kb")
 
@@ -104,6 +104,12 @@ class KnowledgeIndex:
             emb_path = self.cache_dir / "embeddings.npz"
             if not (chunks_path.exists() and vec_path.exists()):
                 return False
+            # v0.36.2 安全修复：pickle 反序列化会执行任意代码，加载前必须验证
+            # manifest 记录的向量器文件指纹（缺失/不符 → 触发重建，拒绝加载可疑缓存）
+            manifest = Manifest.load(self.cache_dir)
+            if manifest is None or not manifest.verify_vectorizer(vec_path):
+                _log.warning("向量器缓存缺失或指纹不符（可能是旧版缓存或文件被篡改），触发重建")
+                return False
             raw = json.loads(chunks_path.read_text(encoding="utf-8"))
             self.chunks = [
                 Chunk(
@@ -150,7 +156,11 @@ class KnowledgeIndex:
             pickle.dump(self._vectorizer, f)
         if self._embeddings is not None and len(self._embeddings):
             np.savez(self.cache_dir / "embeddings.npz", vectors=self._embeddings)
-        Manifest(hashes=self._current_hashes(), options=self._options()).save(self.cache_dir)
+        Manifest(
+            hashes=self._current_hashes(),
+            options=self._options(),
+            vectorizer_sha256=sha256_file(self.cache_dir / "tfidf.pkl"),
+        ).save(self.cache_dir)
 
     def rebuild(self, *, force: bool = False) -> None:
         """全量或增量重建索引。只对变更文件重切/重编码；未变 chunk 的向量复用。"""

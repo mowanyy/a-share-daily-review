@@ -224,3 +224,64 @@ def test_api_fund_analyze_404(app):
         "/api/fund/analyze", json={"manager_id": "fundstyle-nope", "question": "600519", "klt": 102}
     )
     assert r.status_code == 404
+
+# ---------------------------------------------------------------- 会话安全（v0.36.2：路径穿越修复）
+
+
+@pytest.fixture
+def fa_settings(tmp_path, monkeypatch):
+    """把 fund_agent 数据目录指向临时目录，避免污染真实 data/fund_sessions。"""
+    import daily_review.web.fund_agent as fa
+    from daily_review.config import Settings
+
+    monkeypatch.setattr(fa, "get_settings", lambda: Settings(data_dir=tmp_path))
+    return tmp_path
+
+
+def test_session_path_rejects_traversal(fa_settings):
+    from daily_review.web.fund_agent import ManagerNotFound, _session_path
+
+    bad = ["../evil", r"..\..\foo", "a/b", "a.b", "a b", "", "a" * 65, "..%2F..%2Ffoo", "fund.x"]
+    for mid in bad:
+        with pytest.raises(ManagerNotFound):
+            _session_path(mid)
+    # 合法：字母/数字/下划线/连字符与中文（基金经理档案 id 含中文与连字符）
+    assert _session_path("fundstyle-deep-value-zhangkun").name == "fundstyle-deep-value-zhangkun.json"
+    assert _session_path("深度价值-张坤型").name == "深度价值-张坤型.json"
+
+
+def test_clear_session_rejects_traversal(fa_settings):
+    from daily_review.web.fund_agent import ManagerNotFound, clear_session
+
+    # 目录外放一个哨兵 .json，穿越 id 必须被白名单拒绝，绝不触碰文件系统
+    sentinel = fa_settings.parent / "sentinel.json"
+    sentinel.write_text("{}", encoding="utf-8")
+    with pytest.raises(ManagerNotFound):
+        clear_session("../../sentinel")
+    with pytest.raises(ManagerNotFound):
+        clear_session(r"..\..\sentinel")
+    assert sentinel.exists()
+    assert sentinel.read_text(encoding="utf-8") == "{}"
+
+
+def test_session_roundtrip_legal_chinese_id(fa_settings):
+    from daily_review.web.fund_agent import clear_session, get_session
+
+    clear_session("深度价值-张坤型")
+    s = get_session("深度价值-张坤型")
+    assert s["history_length"] == 0
+    # 会话文件落在 fund_sessions/ 内
+    assert (fa_settings / "fund_sessions" / "深度价值-张坤型.json").exists() is False  # 空会话不落盘
+
+
+def test_api_fund_session_blocks_traversal(app, monkeypatch, tmp_path):
+    import daily_review.web.fund_agent as fa
+    from daily_review.config import Settings
+
+    monkeypatch.setattr(fa, "get_settings", lambda: Settings(data_dir=tmp_path))
+    c = app.test_client()
+    # %2F 编码的穿越 id → 404（读与删都拒绝）
+    assert c.get("/api/fund/session/..%2F..%2Ffoo").status_code == 404
+    assert c.post("/api/fund/clear/..%2F..%2Ffoo").status_code == 404
+    # 合法中文 id 正常访问（无会话 → 200 空摘要）
+    assert c.get("/api/fund/session/%E6%B7%B1%E5%BA%A6%E4%BB%B7%E5%80%BC-%E5%BC%A0%E5%9D%A4%E5%9E%8B").status_code == 200

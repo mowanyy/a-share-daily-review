@@ -25,6 +25,7 @@ def make_jm(tmp_path):
 @pytest.fixture
 def fake_pipeline(monkeypatch):
     """monkeypatch collect/compute/generate_report。"""
+    import daily_review.dashboard as dash_mod
     import daily_review.llm.reporter as reporter_mod
     import daily_review.pipeline as pipeline_mod
 
@@ -43,6 +44,7 @@ def fake_pipeline(monkeypatch):
     monkeypatch.setattr(pipeline_mod, "collect", fake_collect)
     monkeypatch.setattr(pipeline_mod, "compute", fake_compute)
     monkeypatch.setattr(reporter_mod, "generate_report", fake_generate)
+    monkeypatch.setattr(dash_mod, "try_pregenerate_dashboard", lambda d, **kw: True)
     return state
 
 

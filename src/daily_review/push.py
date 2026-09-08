@@ -168,6 +168,13 @@ def generate(report_type: str, date: str) -> str:
         from daily_review.analysis.review_snapshot import save_review_snapshot
 
         save_review_snapshot(indicators, date)
+        # 附写图表看板（失败不阻断），Web /dashboard 可秒开
+        try:
+            from daily_review.dashboard import try_pregenerate_dashboard
+
+            try_pregenerate_dashboard(date)
+        except Exception:
+            pass
         return generate_report(indicators, date)
 
     # plan / open：数据基准是前一交易日

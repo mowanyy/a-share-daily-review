@@ -423,18 +423,24 @@ def api_fund_analyze():
 @api_bp.post("/api/fund/clear/<manager_id>")
 def api_fund_clear(manager_id: str):
     """清空该基金经理的会话历史与中军跟踪。"""
-    from daily_review.web.fund_agent import clear_session
+    from daily_review.web.fund_agent import ManagerNotFound, clear_session
 
-    clear_session(manager_id)
+    try:
+        clear_session(manager_id)
+    except ManagerNotFound as exc:
+        return jsonify({"error": str(exc)}), 404
     return jsonify({"ok": True})
 
 
 @api_bp.get("/api/fund/session/<manager_id>")
 def api_fund_session(manager_id: str):
     """返回会话信息（history_length, zhongjun, updated_at）。"""
-    from daily_review.web.fund_agent import get_session
+    from daily_review.web.fund_agent import ManagerNotFound, get_session
 
-    return jsonify(get_session(manager_id))
+    try:
+        return jsonify(get_session(manager_id))
+    except ManagerNotFound as exc:
+        return jsonify({"error": str(exc)}), 404
 
 
 # ---------------------------------------------------------------- 多 Agent 通信 API（v0.20）
@@ -576,9 +582,9 @@ def api_qa_ask():
 
 # ---------------------------------------------------------------- 数据看板 API
 
-_CLOSE_TIME = datetime.strptime("18:00", "%H:%M").time()
-# 盘中缓存 TTL：当日数据实时变动（涨跌停 15:00 收盘，龙虎榜盘后完整），缓存 10 分钟；
-# 历史日期/收盘后（18:00 龙虎榜齐）定稿，进程内不失效
+_CLOSE_TIME = datetime.strptime("15:00", "%H:%M").time()
+# 盘中缓存 TTL：当日涨跌停盘中变动，缓存 10 分钟；
+# 历史日期/收盘后（15:00 图表定稿）定稿，进程内不失效
 _INTRADAY_TTL_SECONDS = 600
 
 
@@ -587,17 +593,16 @@ def _clock() -> datetime:
 
 
 def _dashboard_cache_is_fresh(trade_date: str, stored_ts: float) -> bool:
-    """看板缓存/文件是否仍有效：历史日期定稿；今日盘中 10 分钟 TTL；今日 18:00 后须 18:00 之后生成。
+    """看板缓存/文件是否仍有效：历史日期定稿；今日盘中 10 分钟 TTL；今日 15:00 后须 15:00 之后生成。
 
-    定稿边界取 18:00 而非 15:00：看板含龙虎榜章节，榜单盘后 18:00 才完整，
-    15:00–18:00 之间生成的快照龙虎榜为空，不能当最终版缓存。
+    定稿边界取 15:00：看板已去掉龙虎榜明细，图表口径以收盘涨跌停为准。
     """
     now = _clock()
     if trade_date != now.strftime("%Y%m%d"):
         return True  # 历史日期数据已定稿
     if now.time() >= _CLOSE_TIME:
-        close_ts = datetime.strptime(now.strftime("%Y%m%d") + "180000", "%Y%m%d%H%M%S").timestamp()
-        return stored_ts >= close_ts  # 收盘后：18:00 前生成的盘中快照视为过期
+        close_ts = datetime.strptime(now.strftime("%Y%m%d") + "150000", "%Y%m%d%H%M%S").timestamp()
+        return stored_ts >= close_ts  # 收盘后：15:00 前生成的盘中快照视为过期
     return (now.timestamp() - stored_ts) <= _INTRADAY_TTL_SECONDS  # 盘中：10 分钟
 
 
@@ -625,7 +630,7 @@ class DashboardCache:
                 del self._items[oldest]
 
 
-# 单飞：同 (date, days, no_llm) 并发首个请求只生成一次，其余等待缓存命中
+# 单飞：同 (date, days) 并发首个请求只生成一次，其余等待缓存命中
 _GENERATION_LOCKS: dict[tuple, threading.Lock] = {}
 _GENERATION_LOCKS_GUARD = threading.Lock()
 
@@ -639,23 +644,17 @@ def _generation_lock(key: tuple) -> threading.Lock:
         return lock
 
 
-def _file_matches_request(text: str, trade_date: str, n_days: int, no_llm: bool) -> bool:
-    """看板文件内容核对：文件名不编码 n_days/no_llm，复用前须确认窗口与 LLM 开关一致。
-
-    - n_days：从 `const DATA` 里取 "n_days":N 核对；
-    - LLM 开关：无解读时 HTML 含固定占位「（未生成解读）」，据此判断文件是否带解读。
-    """
+def _file_matches_request(text: str, trade_date: str, n_days: int) -> bool:
+    """看板文件内容核对：文件名不编码 n_days，复用前从 `const DATA` 核对窗口天数。"""
+    del trade_date  # 文件名已按日期定位；此处仅核 n_days
     m = re.search(r'"n_days":\s*(\d+)', text)
-    if not m or int(m.group(1)) != n_days:
-        return False
-    file_has_llm = "（未生成解读）" not in text
-    return file_has_llm != no_llm  # 用户要解读文件须有；用户不要解读文件须无
+    return bool(m) and int(m.group(1)) == n_days
 
 
-def _serve_existing_dashboard_file(trade_date: str, n_days: int, no_llm: bool) -> str | None:
+def _serve_existing_dashboard_file(trade_date: str, n_days: int) -> str | None:
     """复用已生成的 output/{date}_看板.html（历史日期/收盘后定稿才复用；内容与请求核对）。
 
-    首次生成很慢（联网采集），若 CLI/启动器/Web 已生成过看板文件，web 直接秒开。
+    首次加载很慢（联网采集），若 CLI/复盘预写/Web 已生成过看板文件，直接秒开。
     """
     from daily_review.config import get_settings
 
@@ -664,7 +663,7 @@ def _serve_existing_dashboard_file(trade_date: str, n_days: int, no_llm: bool) -
         if not path.exists():
             return None
         text = path.read_text(encoding="utf-8")
-        if not _file_matches_request(text, trade_date, n_days, no_llm):
+        if not _file_matches_request(text, trade_date, n_days):
             return None
         if not _dashboard_cache_is_fresh(trade_date, path.stat().st_mtime):
             return None
@@ -673,22 +672,21 @@ def _serve_existing_dashboard_file(trade_date: str, n_days: int, no_llm: bool) -
         return None
 
 
-def _generate_dashboard_html(trade_date: str, n_days: int, no_llm: bool) -> str:
-    """联网采集→指标→渲染看板 HTML（慢；仅在缓存/文件均未命中时调用）。
+def _generate_dashboard_html(trade_date: str, n_days: int) -> str:
+    """轻量采集→指标→渲染看板 HTML（仅缓存/文件均未命中时调用）。
 
     默认 10 日窗口成功生成后落盘 output/{date}_看板.html，进程重启后文件复用秒开
     （非默认窗口不落盘，避免覆盖默认命名文件；内容核对在复用侧兜底）。
     """
     from daily_review.config import get_settings
-    from daily_review.dashboard import DEFAULT_N_DAYS, _assemble_payload, _dashboard_interpretation, build_trend, render_html
-    from daily_review.pipeline import collect, compute
+    from daily_review.dashboard import DEFAULT_N_DAYS, _assemble_payload, build_trend, render_html
+    from daily_review.pipeline import collect_dashboard, compute_dashboard
 
-    collected = collect(trade_date, n_days=n_days)
-    indicators = compute(collected)
+    collected = collect_dashboard(trade_date, n_days=n_days)
+    indicators = compute_dashboard(collected)
     trend = build_trend(collected, indicators, n_days)
     payload = _assemble_payload(indicators, trend, collected)
-    llm_text = "" if no_llm else _dashboard_interpretation(indicators, trend)
-    html = render_html(payload, llm_text)
+    html = render_html(payload)
     if n_days == DEFAULT_N_DAYS:
         try:
             out = get_settings().output_dir / f"{trade_date}_看板.html"
@@ -701,7 +699,7 @@ def _generate_dashboard_html(trade_date: str, n_days: int, no_llm: bool) -> str:
 
 @api_bp.get("/api/dashboard/view")
 def api_dashboard_view():
-    """数据看板 iframe 内容。缓存/文件秒开；首次联网生成慢；失败给自包含错误页（不裸 500）。"""
+    """数据看板 iframe 内容。缓存/文件秒开；首次联网加载慢；失败给自包含错误页（不裸 500）。"""
     trade_date = request.args.get("date", "").strip() or _recent_date()
     if not _DATE_RE.fullmatch(trade_date):
         return jsonify({"error": "date 需为 YYYYMMDD"}), 400
@@ -710,22 +708,21 @@ def api_dashboard_view():
     except ValueError:
         n_days = 10
     n_days = max(2, min(n_days, 60))
-    no_llm = request.args.get("no_llm", "1") not in ("0", "false", "")
 
     cache: DashboardCache = current_app.extensions["dashboard_cache"]
-    key = (trade_date, n_days, no_llm)
+    key = (trade_date, n_days)
 
     html = cache.get(key, trade_date)
     if html is None:
-        html = _serve_existing_dashboard_file(trade_date, n_days, no_llm)
+        html = _serve_existing_dashboard_file(trade_date, n_days)
     if html is None:
         with _generation_lock(key):  # 单飞：并发同参只生成一次，第二个等锁后命中缓存
             html = cache.get(key, trade_date)
             if html is None:
-                html = _serve_existing_dashboard_file(trade_date, n_days, no_llm)
+                html = _serve_existing_dashboard_file(trade_date, n_days)
             if html is None:
                 try:
-                    html = _generate_dashboard_html(trade_date, n_days, no_llm)
+                    html = _generate_dashboard_html(trade_date, n_days)
                     cache.set(key, html)  # 成功才缓存；失败不缓存，下次请求重试
                 except Exception as exc:  # noqa: BLE001 —— 看板兜底：错误页进 iframe，不裸 500
                     from daily_review.dashboard import render_error_html
@@ -752,6 +749,18 @@ def _get_audit_db():
     return current_app.extensions.get("audit_db")
 
 
+def _audit_limit(default: int = 50, maximum: int = 200) -> int:
+    """审计 API limit 参数钳制（v0.36.2）：非数字回落默认；负数/超限收拢到 [1, 200]。
+
+    此前 `int(request.args.get("limit"))` 非数字直接 500，负数经 SQL LIMIT 变成无界查询。
+    """
+    try:
+        n = int(request.args.get("limit", str(default)))
+    except (TypeError, ValueError):
+        return default
+    return max(1, min(n, maximum))
+
+
 @api_bp.get("/api/audit/messages")
 def api_audit_messages():
     """消息记录列表。参数：chat_id（可选），limit（缺省 50）。"""
@@ -759,7 +768,7 @@ def api_audit_messages():
     if audit_db is None:
         return jsonify({"error": "审计日志未启用"}), 400
     chat_id = request.args.get("chat_id", "").strip() or None
-    limit = min(int(request.args.get("limit", "50")), 200)
+    limit = _audit_limit()
     if chat_id:
         messages = audit_db.recent_messages(chat_id, limit=limit)
     else:
@@ -773,7 +782,7 @@ def api_audit_anomalies():
     audit_db = _get_audit_db()
     if audit_db is None:
         return jsonify({"error": "审计日志未启用"}), 400
-    limit = min(int(request.args.get("limit", "50")), 200)
+    limit = _audit_limit()
     anomalies = audit_db.recent_anomalies(limit=limit)
     return jsonify({"anomalies": anomalies, "count": len(anomalies)})
 
@@ -784,7 +793,7 @@ def api_audit_errors():
     audit_db = _get_audit_db()
     if audit_db is None:
         return jsonify({"error": "审计日志未启用"}), 400
-    limit = min(int(request.args.get("limit", "50")), 200)
+    limit = _audit_limit()
     errors = audit_db.recent_errors(limit=limit)
     return jsonify({"errors": errors, "count": len(errors)})
 
@@ -795,7 +804,7 @@ def api_audit_traces():
     audit_db = _get_audit_db()
     if audit_db is None:
         return jsonify({"error": "审计日志未启用"}), 400
-    limit = min(int(request.args.get("limit", "50")), 200)
+    limit = _audit_limit()
     traces = audit_db.recent_traces(limit=limit)
     return jsonify({"traces": traces, "count": len(traces)})
 

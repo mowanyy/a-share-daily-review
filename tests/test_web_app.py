@@ -108,9 +108,11 @@ def test_review_recent_date(app, monkeypatch):
 def test_review_start_and_status(app, monkeypatch):
     import daily_review.llm.reporter as reporter_mod
     import daily_review.pipeline as pipeline_mod
+    import daily_review.dashboard as dash_mod
 
     monkeypatch.setattr(pipeline_mod, "collect", lambda d, n_days=10: {"date": d})
     monkeypatch.setattr(pipeline_mod, "compute", lambda c: {"emotion": {"available": False}})
+    monkeypatch.setattr(dash_mod, "try_pregenerate_dashboard", lambda d, **kw: True)
     monkeypatch.setattr(
         reporter_mod,
         "generate_report",
@@ -177,50 +179,48 @@ def test_dashboard_view_cached_second_call_skips_generation(app, monkeypatch):
 
     calls = {"n": 0}
 
-    def fake_gen(trade_date, n_days, no_llm):
+    def fake_gen(trade_date, n_days):
         calls["n"] += 1
         return f"<html>dash-{trade_date}-{n_days}</html>"
 
     monkeypatch.setattr(routes_mod, "_generate_dashboard_html", fake_gen)
-    # 历史日期定稿 → 缓存不失效（不依赖当前时钟）
     c = app.test_client()
-    r1 = c.get("/api/dashboard/view?date=20260730&days=10&no_llm=1")
+    r1 = c.get("/api/dashboard/view?date=20260730&days=10")
     assert r1.status_code == 200
-    r2 = c.get("/api/dashboard/view?date=20260730&days=10&no_llm=1")
+    r2 = c.get("/api/dashboard/view?date=20260730&days=10")
     assert r2.status_code == 200
     assert calls["n"] == 1, "第二次请求不应重新生成"
     assert r2.get_data(as_text=True) == r1.get_data(as_text=True)
 
 
-def _dash_file(tmp_path, *, n_days=10, no_llm=True, body="<html>file-dash</html>"):
-    """写一个与请求可匹配的 output/{date}_看板.html：含 n_days 标记；no_llm 文件带「未生成解读」。"""
+def _dash_file(tmp_path, *, n_days=10, body="<html>file-dash</html>"):
+    """写一个与请求可匹配的 output/{date}_看板.html：含 n_days 标记。"""
     from daily_review.config import get_settings
 
     s = get_settings()
     od = tmp_path / "output"
     od.mkdir(exist_ok=True)
-    marker = "（未生成解读）" if no_llm else "<div>LLM 解读内容</div>"
     (od / "20260730_看板.html").write_text(
-        f'const DATA = {{ "n_days": {n_days} }}; {marker}{body}', encoding="utf-8"
+        f'const DATA = {{ "n_days": {n_days} }}; {body}', encoding="utf-8"
     )
     return od
 
 
 def test_dashboard_view_serves_existing_file_without_collect(app, monkeypatch, tmp_path):
-    """CLI/启动器已生成 output/{date}_看板.html 且参数匹配 → web 直接复用，秒开、不联网。"""
+    """CLI/复盘已预写 output/{date}_看板.html 且参数匹配 → web 直接复用，秒开、不联网。"""
     from daily_review.config import get_settings
     import daily_review.web.routes as routes_mod
 
     s = get_settings()
-    od = _dash_file(tmp_path, n_days=10, no_llm=True)
+    od = _dash_file(tmp_path, n_days=10)
     monkeypatch.setattr(s, "output_dir", od)
 
-    def fake_gen(trade_date, n_days, no_llm):
+    def fake_gen(trade_date, n_days):
         raise AssertionError("有已生成文件时不应触发联网重新生成")
 
     monkeypatch.setattr(routes_mod, "_generate_dashboard_html", fake_gen)
     c = app.test_client()
-    r = c.get("/api/dashboard/view?date=20260730&days=10&no_llm=1")
+    r = c.get("/api/dashboard/view?date=20260730&days=10")
     assert r.status_code == 200
     assert "<html>file-dash</html>" in r.get_data(as_text=True)
 
@@ -231,53 +231,31 @@ def test_dashboard_view_file_reuse_only_default_days(app, monkeypatch, tmp_path)
     import daily_review.web.routes as routes_mod
 
     s = get_settings()
-    od = _dash_file(tmp_path, n_days=10, no_llm=True)
+    od = _dash_file(tmp_path, n_days=10)
     monkeypatch.setattr(s, "output_dir", od)
     monkeypatch.setattr(routes_mod, "_generate_dashboard_html",
-                        lambda d, n, no_llm: f"<html>gen-{n}</html>")
-    r = app.test_client().get("/api/dashboard/view?date=20260730&days=20&no_llm=1")
+                        lambda d, n: f"<html>gen-{n}</html>")
+    r = app.test_client().get("/api/dashboard/view?date=20260730&days=20")
     assert r.status_code == 200
     assert "gen-20" in r.get_data(as_text=True)
 
 
-def test_dashboard_view_file_reuse_no_llm_mismatch_not_served(app, monkeypatch, tmp_path):
-    """LLM 开关与文件不一致 → 不复用文件（用户要解读文件却无 / 用户不要解读文件却有）。"""
-    from daily_review.config import get_settings
-    import daily_review.web.routes as routes_mod
-
-    s = get_settings()
-    monkeypatch.setattr(s, "output_dir", _dash_file(tmp_path, n_days=10, no_llm=True))
-    calls = {"n": 0}
-    monkeypatch.setattr(routes_mod, "_generate_dashboard_html",
-                        lambda d, n, no_llm: (calls.__setitem__("n", calls["n"] + 1), "<html>gen</html>")[1])
-    # 用户要解读（no_llm=0），文件却是「未生成解读」→ 不复用
-    r = app.test_client().get("/api/dashboard/view?date=20260730&days=10&no_llm=0")
-    assert r.status_code == 200 and "gen" in r.get_data(as_text=True) and calls["n"] == 1
-
-
 def test_file_matches_request():
-    """文件内容核对：n_days 与 LLM 开关都须与请求一致。"""
+    """文件内容核对：仅核 n_days。"""
     import daily_review.web.routes as routes_mod
 
-    no_llm_file = 'const DATA = { "n_days": 10 }; （未生成解读）'
-    llm_file = 'const DATA = { "n_days": 10 }; <div>近5日温度回升</div>'
-    # n_days 匹配 + 无解读文件 → 只服务 no_llm=True 请求
-    assert routes_mod._file_matches_request(no_llm_file, "20260730", 10, True)
-    assert not routes_mod._file_matches_request(no_llm_file, "20260730", 10, False)
-    # 带解读文件 → 只服务 no_llm=False 请求
-    assert routes_mod._file_matches_request(llm_file, "20260730", 10, False)
-    assert not routes_mod._file_matches_request(llm_file, "20260730", 10, True)
-    # 天数不匹配 / 无 n_days 标记 → 不复用
-    assert not routes_mod._file_matches_request(no_llm_file, "20260730", 20, True)
-    assert not routes_mod._file_matches_request("<html>无标记</html>", "20260730", 10, True)
+    ok = 'const DATA = { "n_days": 10 }; <html>ok</html>'
+    assert routes_mod._file_matches_request(ok, "20260730", 10)
+    assert not routes_mod._file_matches_request(ok, "20260730", 20)
+    assert not routes_mod._file_matches_request("<html>无标记</html>", "20260730", 10)
 
 
 def test_generation_lock_same_key_same_lock():
-    """单飞：同 (date, days, no_llm) 并发请求拿到同一把锁；不同 key 不同锁。"""
+    """单飞：同 (date, days) 并发请求拿到同一把锁；不同 key 不同锁。"""
     import daily_review.web.routes as routes_mod
 
-    k1 = ("20260730", 10, True)
-    k2 = ("20260730", 10, False)
+    k1 = ("20260730", 10)
+    k2 = ("20260730", 20)
     assert routes_mod._generation_lock(k1) is routes_mod._generation_lock(k1)
     assert routes_mod._generation_lock(k1) is not routes_mod._generation_lock(k2)
 
@@ -286,20 +264,19 @@ def test_dashboard_view_error_falls_back_clean_page(app, monkeypatch):
     """联网采集/指标失败 → 自包含错误页进 iframe（HTTP 200），不裸 500。"""
     import daily_review.web.routes as routes_mod
 
-    def boom(trade_date, n_days, no_llm):
+    def boom(trade_date, n_days):
         raise RuntimeError("collect failed")
 
     monkeypatch.setattr(routes_mod, "_generate_dashboard_html", boom)
     monkeypatch.setattr(routes_mod, "_serve_existing_dashboard_file", lambda *a: None)
     c = app.test_client()
-    r = c.get("/api/dashboard/view?date=20260730&days=10&no_llm=1")
+    r = c.get("/api/dashboard/view?date=20260730&days=10")
     assert r.status_code == 200
     body = r.get_data(as_text=True)
-    assert "数据看板生成失败" in body
+    assert "数据看板加载失败" in body
     assert "collect failed" in body
-    # 错误不缓存：下次请求重试，而非一直显示错误
-    r2 = c.get("/api/dashboard/view?date=20260730&days=10&no_llm=1")
-    assert "数据看板生成失败" in r2.get_data(as_text=True)
+    r2 = c.get("/api/dashboard/view?date=20260730&days=10")
+    assert "数据看板加载失败" in r2.get_data(as_text=True)
 
 
 def test_dashboard_view_invalid_date(app):
@@ -318,30 +295,23 @@ def test_config_llm_endpoint(app, monkeypatch):
 
 
 def test_dashboard_cache_freshness_rules(monkeypatch):
-    """缓存/文件有效期：历史日期定稿；今日盘中 10 分钟；今日 18:00（龙虎榜齐）后须 18:00 后生成。"""
+    """缓存/文件有效期：历史日期定稿；今日盘中 10 分钟；今日 15:00 后须 15:00 后生成。"""
     import datetime
 
     import daily_review.web.routes as routes_mod
 
     intraday = datetime.datetime(2026, 8, 11, 14, 0)
     monkeypatch.setattr(routes_mod, "_clock", lambda: intraday)
-    # 历史日期：永不失效
     assert routes_mod._dashboard_cache_is_fresh("20260730", 0.0) is True
-    # 今日盘中：10 分钟内有效
     assert routes_mod._dashboard_cache_is_fresh("20260811", intraday.timestamp() - 100) is True
     assert routes_mod._dashboard_cache_is_fresh("20260811", intraday.timestamp() - 700) is False
-    # 定稿边界 18:00：18:00 前仍是盘中 TTL（15:01 生成、15:30 看已超 10 分钟 → 过期）
-    mid = datetime.datetime(2026, 8, 11, 15, 30)
-    monkeypatch.setattr(routes_mod, "_clock", lambda: mid)
-    assert routes_mod._dashboard_cache_is_fresh("20260811",
-                                                datetime.datetime(2026, 8, 11, 15, 1).timestamp()) is False
-    # 18:00 后：18:00 前生成的盘中快照过期（龙虎榜空），18:00 后生成的有效
-    after = datetime.datetime(2026, 8, 11, 18, 30)
+    # 15:00 后：15:00 前生成的盘中快照过期，15:00 后生成的有效
+    after = datetime.datetime(2026, 8, 11, 15, 30)
     monkeypatch.setattr(routes_mod, "_clock", lambda: after)
     assert routes_mod._dashboard_cache_is_fresh("20260811",
-                                                datetime.datetime(2026, 8, 11, 16, 0).timestamp()) is False
+                                                datetime.datetime(2026, 8, 11, 14, 50).timestamp()) is False
     assert routes_mod._dashboard_cache_is_fresh("20260811",
-                                                datetime.datetime(2026, 8, 11, 18, 1).timestamp()) is True
+                                                datetime.datetime(2026, 8, 11, 15, 1).timestamp()) is True
 
 
 def test_dashboard_cache_evicts_oldest(monkeypatch):
@@ -354,10 +324,9 @@ def test_dashboard_cache_evicts_oldest(monkeypatch):
     monkeypatch.setattr(routes_mod, "_clock", lambda: base)
     c = DashboardCache()
     for i in range(20):
-        c.set(("20260730", i, True), f"h{i}")
-    # 最多保留 MAX=16 条，逐出最旧
-    assert c.get(("20260730", 0, True), "20260730") is None
-    assert c.get(("20260730", 19, True), "20260730") == "h19"
+        c.set(("20260730", i), f"h{i}")
+    assert c.get(("20260730", 0), "20260730") is None
+    assert c.get(("20260730", 19), "20260730") == "h19"
 
 
 # ---------------------------------------------------------------- 审计日志页面（v0.35）
@@ -433,3 +402,36 @@ def test_audit_chat_ids_api(app, tmp_path, monkeypatch):
     assert r.status_code == 200
     data = r.get_json()
     assert sorted(data["chat_ids"]) == ["chat_a", "chat_b"]
+
+
+# ---------------------------------------------------------------- v0.36.2 安全加固
+
+
+def test_audit_api_limit_guards_bad_input(app, tmp_path, monkeypatch):
+    """limit 参数非数字/负数/超限均被钳制，不再 500 或变成无界查询。"""
+    from daily_review.web.audit import AuditDB
+
+    db = AuditDB(db_path=tmp_path / "test_audit.db")
+    for i in range(3):
+        db.log_message("chat_1", "user", f"q{i}")
+    monkeypatch.setitem(app.extensions, "audit_db", db)
+    c = app.test_client()
+    assert c.get("/api/audit/messages?limit=abc").status_code == 200
+    assert c.get("/api/audit/messages?limit=-5").status_code == 200
+    assert c.get("/api/audit/messages?limit=999999").status_code == 200
+    assert len(c.get("/api/audit/messages?limit=abc").get_json()["messages"]) == 3
+    assert len(c.get("/api/audit/messages?limit=-5").get_json()["messages"]) == 1  # 负数→1
+
+
+def test_host_header_guard(app):
+    """非回环 Host 头被 400 拒绝（防 DNS rebinding）。"""
+    c = app.test_client()
+    assert c.get("/", headers={"Host": "evil.example.com"}).status_code == 400
+    assert c.get("/", headers={"Host": "127.0.0.1:5000"}).status_code == 200
+    assert c.get("/", headers={"Host": "localhost"}).status_code == 200
+    assert c.get("/", headers={"Host": "[::1]:5000"}).status_code == 200
+
+
+def test_app_has_secret_key(app):
+    """SECRET_KEY 已配置（默认进程内随机，可用环境变量覆盖）。"""
+    assert app.secret_key and len(app.secret_key) >= 16

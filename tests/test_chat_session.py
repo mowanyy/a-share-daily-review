@@ -126,3 +126,42 @@ class TestSummary:
         m = _manager(tmp_path)
         summary = m.get_summary("empty_sum")
         assert summary["rounds"] == 0
+
+# ---------------------------------------------------------------- 会话安全（v0.36.2：chat_id 白名单）
+
+
+class TestChatIdSecurity:
+    """非法 chat_id 不得触碰文件系统（防 `data/chat_sessions/{id}.json` 路径穿越）。"""
+
+    def test_path_rejects_traversal(self, tmp_path):
+        import pytest
+
+        from daily_review.web.chat_session import ChatSessionManager
+
+        m = _manager(tmp_path)
+        bad = ["../evil", r"..\..\foo", "a/b", "a.b", "a b", "", "a" * 65, "oc_x.y", "..%2F..%2Ffoo"]
+        for cid in bad:
+            with pytest.raises(ValueError):
+                m._path(cid)
+
+    def test_add_turn_rejects_traversal(self, tmp_path):
+        import pytest
+
+        from daily_review.web.chat_session import ChatSessionManager
+
+        m = _manager(tmp_path)
+        sentinel = tmp_path.parent / "sentinel.json"
+        sentinel.write_text("{}", encoding="utf-8")
+        with pytest.raises(ValueError):
+            m.add_turn("../../sentinel", "q", "a")
+        with pytest.raises(ValueError):
+            m.clear(r"..\..\sentinel")
+        assert sentinel.exists()
+
+    def test_legal_chat_id_still_works(self, tmp_path):
+        from daily_review.web.chat_session import ChatSessionManager
+
+        m = _manager(tmp_path)
+        m.add_turn("oc_abc123", "q", "a")
+        assert len(m.load("oc_abc123")["messages"]) == 2
+        assert (tmp_path / "chat_sessions" / "oc_abc123.json").exists()

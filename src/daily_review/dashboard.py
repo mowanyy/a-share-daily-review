@@ -1,11 +1,10 @@
-"""数据看板：近 N 日趋势图表 + LLM 多日趋势解读（单文件 HTML）。
+"""数据看板：近 N 日 KPI + 趋势图表（单文件 HTML，无 AI 文案）。
 
-对齐 v0.6 设计（见 docs/需求分析.md §3）：
-- 形态：自包含 `output/{date}_看板.html`，零外链/零 CDN，纯 JS + 内联 SVG 画图，浏览器直接打开
+对齐图表化看板（v0.36）：
+- 形态：自包含 `output/{date}_看板.html`，零外链/零 CDN，纯 JS + 内联 SVG 画图
 - 数据：复用 `pipeline.collect(n_days)` + `pipeline.compute()`；趋势行由各日池子逐日核算，
-  情绪温度直接复用 `compute_emotion` 的 `series`（按 date 匹配，与方向无关）
-- LLM：顶部一段「多日趋势解读」（`module.dashboard` prompt + DeepSeek）；无 key / --no-llm / 失败
-  时降级为「（未生成解读）」，数据看板照常渲染
+  情绪温度直接复用 `compute_emotion` 的 `series`（按 date 匹配）
+- 内容：KPI + 2×2 趋势图 + 趋势摘要表 + 情绪成分拆解；无 LLM、无梯队/题材/炸板/龙虎榜明细
 - 图表遵循 dataviz 规范：单轴、≥2 序列必有图例、瘦标记、1px 网格、深/浅色双主题
 """
 
@@ -15,9 +14,7 @@ import html
 from pathlib import Path
 
 from daily_review.config import get_settings
-from daily_review.llm.client import LLMError, chat
 from daily_review.llm.reporter import _compact_json, _weekday_cn
-from daily_review.prompts import get_prompt
 
 DEFAULT_N_DAYS = 10
 
@@ -79,11 +76,9 @@ def build_trend(collected: dict, indicators: dict, n_days: int = DEFAULT_N_DAYS)
 # ---------------------------------------------------------------- 前端载荷（render_html 的 DATA）
 
 def _assemble_payload(indicators: dict, trend: list[dict], collected: dict) -> dict:
-    """前端 `const DATA`：趋势行 + KPI + 今日结构面板（梯队/题材/炸板/龙虎榜，均取已核算产出）。"""
+    """前端 `const DATA`：趋势行 + KPI + 情绪成分（无明细章节）。"""
     ladder = indicators.get("ladder", {})
-    brk = indicators.get("break", {})
     emo = indicators.get("emotion") or {}
-    lhb = indicators.get("lhb") or {}
     trade_date = collected["trade_date"]
     today = trend[-1] if trend else {}
     return {
@@ -110,96 +105,7 @@ def _assemble_payload(indicators: dict, trend: list[dict], collected: dict) -> d
             "components": emo.get("components", {}),
             "raw": emo.get("raw", {}),
         },
-        "ladder": {
-            "ladder": ladder.get("ladder", []),
-            "promotion": ladder.get("promotion", {}),
-        },
-        "themes": indicators.get("themes", []),
-        "break": {
-            "break_count": brk.get("break_count", 0),
-            "break_rate": brk.get("break_rate", 0.0),
-            "table": brk.get("table", []),
-        },
-        "lhb": {
-            "overview": lhb.get("overview", {}),
-            "net_rank": lhb.get("net_rank", []),
-            "hotmoney": lhb.get("hotmoney", []),
-        },
     }
-
-
-# ---------------------------------------------------------------- LLM 多日趋势解读
-
-def _dashboard_payload(indicators: dict, trend: list[dict]) -> dict:
-    """module.dashboard 输入载荷（紧凑，字段名对齐 prompt 输入契约）。"""
-    ladder = indicators.get("ladder", {})
-    brk = indicators.get("break", {})
-    emo = indicators.get("emotion") or {}
-    lhb = indicators.get("lhb") or {}
-    return {
-        "近N日趋势": trend,
-        "今日结构摘要": {
-            "KPI": {
-                "涨停家数": ladder.get("zt_count", 0),
-                "连板家数": ladder.get("lianban_count", 0),
-                "空间板": f"{ladder.get('max_lb', 0)}板 {ladder.get('max_lb_stock', '')}",
-                "炸板率": ladder.get("break_rate", 0.0),
-                "跌停家数": today_dt(trend),
-            },
-            "情绪温度(已核算)": {
-                "score": emo.get("score"), "stage": emo.get("stage"),
-                "stage_reason": emo.get("stage_reason"),
-            },
-            "主要题材": [
-                {"name": t.get("theme_name", ""), "member_count": t.get("member_count", 0),
-                 "max_lb": t.get("max_lb", 0), "stage": t.get("stage", ""),
-                 "leader": (t.get("leader") or {}).get("name", "")}
-                for t in indicators.get("themes", [])[:5]
-            ],
-            "炸板概览": {"break_count": brk.get("break_count", 0), "watch": brk.get("watch", [])[:3]},
-            "龙虎榜": {
-                "stock_count": lhb.get("overview", {}).get("stock_count", 0),
-                "hotmoney": [h.get("tag", "") for h in lhb.get("hotmoney", [])[:5]],
-            },
-        },
-    }
-
-
-def today_dt(trend: list[dict]) -> int:
-    """趋势末行（今日）跌停家数，供载荷/展示复用。"""
-    return int(trend[-1].get("dt_count", 0)) if trend else 0
-
-
-def _dashboard_interpretation(indicators: dict, trend: list[dict], api_key: str | None = None) -> str:
-    """LLM 多日趋势解读；失败/无 key/无 prompt 返回空串（render 降级为「（未生成解读）」）。"""
-    p = get_prompt("module.dashboard")
-    if p is None:
-        return ""
-    emo = indicators.get("emotion") or {}
-    forced = ""
-    if emo.get("available"):
-        forced = (
-            f"\n\n【程序核算结果，输出时必须原样采用，不得改写或另造数字】\n"
-            f"情绪温度 {emo.get('score')} 分 / 周期 {emo.get('stage')}。依据：{emo.get('stage_reason')}"
-        )
-    messages = [
-        {"role": "system", "content": p.body},
-        {
-            "role": "user",
-            "content": (
-                f"近{len(trend)}个交易日趋势数据如下（JSON，字段名与上方「输入数据」契约一致）：\n"
-                f"```json\n{_compact_json(_dashboard_payload(indicators, trend))}\n```\n"
-                f"请输出一段 150–250 字的多日趋势解读：用 2–4 个数据点概括 N 日走势"
-                f"（家数/高度/炸板率/温度分段变化）、点名今日所处阶段位置、指出背离或转折；"
-                f"禁止重算任何数字，缺数据日注明「缺数据」。只输出正文一段，不加标题、不加 Markdown 标记。"
-                f"{forced}"
-            ),
-        },
-    ]
-    try:
-        return chat(messages, api_key=api_key, max_tokens=1200).strip()  # 推理模型预留 reasoning 预算
-    except LLMError:
-        return ""
 
 
 # ---------------------------------------------------------------- HTML 渲染
@@ -228,100 +134,96 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink);
   font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-  line-height: 1.5; }
-.board { max-width: 1180px; margin: 0 auto; padding: 24px 20px 48px; }
-.board-head h1 { font-size: 24px; margin: 0 0 4px; font-weight: 650; }
-.sub { color: var(--ink-2); font-size: 13px; }
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-  padding: 16px 18px; margin-bottom: 18px; }
-.panel h2 { margin: 0 0 8px; font-size: 15px; color: var(--ink-2); font-weight: 600; }
-.llm-text { font-size: 14px; color: var(--ink); white-space: pre-wrap; }
-.llm-fallback { color: var(--ink-3); font-style: italic; }
-.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px; margin-bottom: 18px; }
-.kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-  padding: 14px 16px; }
-.kpi .label { font-size: 12px; color: var(--ink-2); }
-.kpi .value { font-size: 30px; font-weight: 650; margin-top: 4px; line-height: 1.1; }
-.kpi .sub { font-size: 12px; margin-top: 4px; }
-.chip { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 12px;
-  background: rgba(31,111,235,.16); color: var(--chip); }
-.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px; }
-@media (max-width: 900px) { .charts { grid-template-columns: 1fr; } }
+  line-height: 1.4; }
+.board { max-width: 1180px; margin: 0 auto; padding: 14px 16px 28px; }
+.board-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 12px; }
+.board-head h1 { font-size: 18px; margin: 0; font-weight: 650; }
+.sub { color: var(--ink-2); font-size: 12px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr);
+  gap: 8px; margin-bottom: 12px; }
+.kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; border-left: 3px solid var(--accent); }
+.kpi .label { font-size: 11px; color: var(--ink-2); letter-spacing: .02em; }
+.kpi .value { font-size: 26px; font-weight: 700; margin-top: 2px; line-height: 1.1;
+  font-variant-numeric: tabular-nums; }
+.kpi .sub { font-size: 11px; margin-top: 3px; }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px;
+  background: rgba(31,111,235,.16); color: var(--chip); font-weight: 600; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.tables { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; min-width: 0; }
+.panel h2 { margin: 0 0 6px; font-size: 12px; color: var(--ink-2); font-weight: 600;
+  text-transform: none; letter-spacing: .02em; }
+@media (max-width: 900px) {
+  .charts, .tables { grid-template-columns: 1fr; }
+  .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+}
 @media (max-width: 767px) {
-  .board { padding: 12px 10px 32px; }
-  .board-head h1 { font-size: 18px; }
-  .kpi-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
-  .kpi { padding: 10px 12px; }
-  .kpi .value { font-size: 24px; }
-  .panel { padding: 10px 12px; }
+  .board { padding: 10px 8px 20px; }
+  .board-head h1 { font-size: 16px; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .kpi { padding: 8px 10px; }
+  .kpi .value { font-size: 22px; }
+  .panel { padding: 8px 10px; }
   table { font-size: 11px; }
-  th, td { padding: 4px 5px; }
+  th, td { padding: 3px 5px; }
 }
 figure { margin: 0; background: var(--panel); border: 1px solid var(--border);
-  border-radius: 10px; padding: 14px 16px; }
-figcaption { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
-.legend { font-size: 12px; color: var(--ink-2); margin-top: 6px; }
-.legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
-  margin: 0 4px 0 12px; vertical-align: -1px; }
+  border-radius: 8px; padding: 8px 10px; }
+figcaption { font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--ink-2); }
+.legend { font-size: 11px; color: var(--ink-2); margin-top: 4px; }
+.legend .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px;
+  margin: 0 4px 0 10px; vertical-align: -1px; }
 svg.chart { width: 100%; height: auto; display: block; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border);
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border);
   white-space: nowrap; }
-/* 表格容器横向溢出兜底：内容超宽时出现横向滚动条而非裁掉文字
-	   （连板梯队「炸板/弱封」/题材/炸板/龙虎榜行数或单元格可随涨停家数暴涨） */
-	#ladder, #themes, #break, #lhb, #trend-summary, #emotion-comp { overflow-x: auto; }
+#trend-summary, #emotion-comp { overflow-x: auto; }
 th { color: var(--ink-2); font-weight: 600; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tbody tr:nth-child(even) { background: rgba(128,128,128,.05); }
 .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--ink-2); }
-.empty { color: var(--ink-3); font-size: 13px; }
+.empty { color: var(--ink-3); font-size: 12px; }
 </style>
 </head>
 <body>
 <div class="board">
   <header class="board-head">
     <h1>__TITLE__ 数据看板（__WEEKDAY__）</h1>
-    <div class="sub">近__N_DAYS__个交易日 · 收盘数据 · 超短连板复盘</div>
+    <div class="sub">近__N_DAYS__个交易日 · 收盘数据</div>
   </header>
-
-  <section class="panel">
-    <h2>多日趋势解读</h2>
-    <div class="llm-text">__LLM_TEXT__</div>
-  </section>
 
   <section class="kpi-grid" id="kpi"></section>
 
   <section class="charts">
     <figure>
       <figcaption>情绪温度走势（0–100）</figcaption>
-      <svg id="chart-emotion" class="chart" viewBox="0 0 900 300"></svg>
+      <svg id="chart-emotion" class="chart" viewBox="0 0 900 220"></svg>
       <div class="legend" id="leg-emotion"></div>
     </figure>
     <figure>
       <figcaption>涨停 / 连板 / 炸板 家数</figcaption>
-      <svg id="chart-counts" class="chart" viewBox="0 0 900 300"></svg>
+      <svg id="chart-counts" class="chart" viewBox="0 0 900 220"></svg>
       <div class="legend" id="leg-counts"></div>
     </figure>
     <figure>
       <figcaption>空间板高度（板）</figcaption>
-      <svg id="chart-height" class="chart" viewBox="0 0 900 260"></svg>
+      <svg id="chart-height" class="chart" viewBox="0 0 900 180"></svg>
       <div class="legend" id="leg-height"></div>
     </figure>
     <figure>
       <figcaption>炸板率（%）</figcaption>
-      <svg id="chart-breakrate" class="chart" viewBox="0 0 900 260"></svg>
+      <svg id="chart-breakrate" class="chart" viewBox="0 0 900 180"></svg>
       <div class="legend" id="leg-breakrate"></div>
     </figure>
   </section>
 
-  <section class="panel"><h2>近__N_DAYS__日趋势摘要</h2><div id="trend-summary"></div></section>
-  <section class="panel"><h2>情绪温度成分拆解</h2><div id="emotion-comp"></div></section>
-
-  <section class="panel"><h2>连板梯队</h2><div id="ladder"></div></section>
-  <section class="panel"><h2>题材结构</h2><div id="themes"></div></section>
-  <section class="panel"><h2>炸板与资金</h2><div id="break"></div></section>
-  <section class="panel"><h2>龙虎榜</h2><div id="lhb"></div></section>
+  <section class="tables">
+    <div class="panel"><h2>近__N_DAYS__日趋势摘要</h2><div id="trend-summary"></div></div>
+    <div class="panel"><h2>情绪温度成分拆解</h2><div id="emotion-comp"></div></div>
+  </section>
 </div>
 
 <script>
@@ -330,27 +232,11 @@ const DATA = __DATA_JSON__;
 function esc(s) { return String(s === null || s === undefined ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 function fmtDate(d) { return d ? d.slice(4, 6) + "-" + d.slice(6) : ""; }
-function fmtMoney(v) {
-  if (v === null || v === undefined || isNaN(v)) return "缺";
-  const a = Math.abs(v);
-  if (a >= 1e8) return (v / 1e8).toFixed(2) + "亿";
-  if (a >= 1e4) return Math.round(v / 1e4) + "万";
-  return Math.round(v).toString();
-}
-/* 弱封股列表截断：最多显示前 5 只，超出补「等 N 只」，避免涨停家数多时撑破表格。 */
-function weakCell(list) {
-  const arr = list || [];
-  if (!arr.length) return "—";
-  const shown = arr.slice(0, 5).join(" / ");
-  const extra = arr.length - 5;
-  return esc(shown) + (extra > 0 ? ' <span class="muted">等 ' + extra + " 只</span>" : "");
-}
 function pct(v, d) { return v === null || v === undefined ? "—" : (v * 100).toFixed(d ?? 1) + "%"; }
-function pctPct(v, d) { return v === null || v === undefined ? "—" : v.toFixed(d ?? 1) + "%"; } /* 值已是百分数（东财 zdp/CHANGE_RATE），不再 ×100 */
 function upDown(v) { return v > 0 ? "up" : v < 0 ? "down" : ""; }
 
 /* ---------- SVG 绘图（通用） ---------- */
-const PAD = { l: 46, r: 16, t: 14, b: 30 };
+const PAD = { l: 42, r: 12, t: 10, b: 26 };
 // SVG 命名空间 URI 带协议前缀（协议名 + 双斜杠），拼装避免字面量——模板保持零外链字面量，
 // 供「单文件自包含」的离线断言扫描（render_html 断言不出现协议前缀）
 const NS = "http:" + "//www.w3.org/2000/svg";
@@ -377,7 +263,7 @@ function drawGridAndAxes(svg, s, yMax, yFmt) {
     svg.appendChild(line);
     const txt = document.createElementNS(NS, "text");
     txt.setAttribute("x", PAD.l - 6); txt.setAttribute("y", y + 4);
-    txt.setAttribute("text-anchor", "end"); txt.setAttribute("font-size", "11");
+    txt.setAttribute("text-anchor", "end"); txt.setAttribute("font-size", "10");
     txt.setAttribute("fill", "var(--ink-3)");
     txt.textContent = yFmt(v);
     svg.appendChild(txt);
@@ -389,8 +275,8 @@ function drawXLabels(svg, rows, s) {
   rows.forEach((r, i) => {
     if (i % every !== 0) return;
     const txt = document.createElementNS(NS, "text");
-    txt.setAttribute("x", s.x(i)); txt.setAttribute("y", s.innerH + PAD.t + 20);
-    txt.setAttribute("text-anchor", "middle"); txt.setAttribute("font-size", "11");
+    txt.setAttribute("x", s.x(i)); txt.setAttribute("y", s.innerH + PAD.t + 18);
+    txt.setAttribute("text-anchor", "middle"); txt.setAttribute("font-size", "10");
     txt.setAttribute("fill", "var(--ink-3)");
     txt.textContent = fmtDate(r.date);
     svg.appendChild(txt);
@@ -398,12 +284,12 @@ function drawXLabels(svg, rows, s) {
 }
 
 function drawLineChart(svg, rows, series, opts) {
-  const { yMax = 100, yFmt = v => Math.round(v), bands = [], highlightLast = false } = opts || {};
-  const W = 900, H = 300;
+  const { yMax = 100, yFmt = v => Math.round(v), bands = [], highlightLast = false,
+          height = 220 } = opts || {};
+  const W = 900, H = height;
   svg.innerHTML = "";
   const s = makeScale(rows, yMax, W, H);
 
-  // 背景阶段色带（情绪温度静态分区）
   bands.forEach(b => {
     const rect = document.createElementNS(NS, "rect");
     rect.setAttribute("x", PAD.l); rect.setAttribute("y", s.y(b.y1));
@@ -412,8 +298,8 @@ function drawLineChart(svg, rows, series, opts) {
     rect.setAttribute("fill", b.fill);
     svg.appendChild(rect);
     const txt = document.createElementNS(NS, "text");
-    txt.setAttribute("x", PAD.l + 6); txt.setAttribute("y", s.y(b.y1) + 14);
-    txt.setAttribute("font-size", "11"); txt.setAttribute("fill", b.labelColor || "var(--ink-3)");
+    txt.setAttribute("x", PAD.l + 6); txt.setAttribute("y", s.y(b.y1) + 12);
+    txt.setAttribute("font-size", "10"); txt.setAttribute("fill", b.labelColor || "var(--ink-3)");
     txt.textContent = b.label;
     svg.appendChild(txt);
   });
@@ -422,7 +308,6 @@ function drawLineChart(svg, rows, series, opts) {
   drawXLabels(svg, rows, s);
 
   series.forEach(sr => {
-    // 断点处理：连续有值分段折线（每段独立 polyline），跳过缺失点
     const flushSeg = (pts) => {
       if (!pts.length) return;
       const line = document.createElementNS(NS, "polyline");
@@ -437,9 +322,8 @@ function drawLineChart(svg, rows, series, opts) {
       const has = v !== null && v !== undefined && !isNaN(v);
       if (has) {
         pts.push(s.x(i).toFixed(1) + "," + s.y(v).toFixed(1));
-        // 数据点（含原生 <title> tooltip；数值同时以表格可达）
         const c = document.createElementNS(NS, "circle");
-        c.setAttribute("cx", s.x(i)); c.setAttribute("cy", s.y(v)); c.setAttribute("r", "4");
+        c.setAttribute("cx", s.x(i)); c.setAttribute("cy", s.y(v)); c.setAttribute("r", "3.5");
         c.setAttribute("fill", sr.color);
         const ti = document.createElementNS(NS, "title");
         ti.textContent = fmtDate(r.date) + " · " + sr.label + " " + (sr.fmt ? sr.fmt(v) : v);
@@ -452,20 +336,19 @@ function drawLineChart(svg, rows, series, opts) {
     });
     flushSeg(pts);
 
-    // 今日终点高亮圆点 + 选择性直接标签（lastLabel 只标主序列终点，防多序列终点标签堆叠/碰撞）
     if (highlightLast) {
       for (let i = rows.length - 1; i >= 0; i--) {
         const v = rows[i][sr.key];
         if (v === null || v === undefined || isNaN(v)) continue;
         const dot = document.createElementNS(NS, "circle");
-        dot.setAttribute("cx", s.x(i)); dot.setAttribute("cy", s.y(v)); dot.setAttribute("r", "5");
+        dot.setAttribute("cx", s.x(i)); dot.setAttribute("cy", s.y(v)); dot.setAttribute("r", "4.5");
         dot.setAttribute("fill", sr.color); dot.setAttribute("stroke", "var(--bg)");
         dot.setAttribute("stroke-width", "2");
         svg.appendChild(dot);
         if (sr.lastLabel) {
           const lbl = document.createElementNS(NS, "text");
-          lbl.setAttribute("x", s.x(i)); lbl.setAttribute("y", Math.max(PAD.t + 12, s.y(v) - 10));
-          lbl.setAttribute("text-anchor", "middle"); lbl.setAttribute("font-size", "12");
+          lbl.setAttribute("x", s.x(i)); lbl.setAttribute("y", Math.max(PAD.t + 12, s.y(v) - 8));
+          lbl.setAttribute("text-anchor", "middle"); lbl.setAttribute("font-size", "11");
           lbl.setAttribute("font-weight", "600"); lbl.setAttribute("fill", sr.color);
           lbl.textContent = sr.fmt ? sr.fmt(v) : v;
           svg.appendChild(lbl);
@@ -477,34 +360,32 @@ function drawLineChart(svg, rows, series, opts) {
 }
 
 function drawBarChart(svg, rows, key, opts) {
-  const { color = "var(--accent)", yFmt = v => v, valueLabel = "" } = opts || {};
-  const W = 900, H = 260;
+  const { color = "var(--accent)", yFmt = v => v, valueLabel = "", height = 180 } = opts || {};
+  const W = 900, H = height;
   svg.innerHTML = "";
   const yMax = Math.max(1, ...rows.map(r => r[key] || 0)) * 1.15;
   const s = makeScale(rows, yMax, W, H);
   drawGridAndAxes(svg, s, yMax, yFmt);
   drawXLabels(svg, rows, s);
-  const barW = Math.min(46, (s.innerW / s.n) * 0.55);
+  const barW = Math.min(40, (s.innerW / s.n) * 0.55);
   rows.forEach((r, i) => {
     const v = r[key] || 0;
     const x = s.x(i) - barW / 2, y = s.y(v), h = s.innerH + PAD.t - y;
     const rect = document.createElementNS(NS, "rect");
     rect.setAttribute("x", x); rect.setAttribute("y", y); rect.setAttribute("width", barW);
     rect.setAttribute("height", h); rect.setAttribute("fill", color);
-    rect.setAttribute("rx", "4"); rect.setAttribute("ry", "4");
-    // 方形底（dataviz：数据端圆角、基线端方形）→ 底部矩形覆盖
+    rect.setAttribute("rx", "3"); rect.setAttribute("ry", "3");
     const base = document.createElementNS(NS, "rect");
-    base.setAttribute("x", x); base.setAttribute("y", s.innerH + PAD.t - 4);
-    base.setAttribute("width", barW); base.setAttribute("height", "4"); base.setAttribute("fill", color);
+    base.setAttribute("x", x); base.setAttribute("y", s.innerH + PAD.t - 3);
+    base.setAttribute("width", barW); base.setAttribute("height", "3"); base.setAttribute("fill", color);
     svg.appendChild(rect); svg.appendChild(base);
     const ti = document.createElementNS(NS, "title");
     ti.textContent = fmtDate(r.date) + " · " + v + valueLabel;
     rect.appendChild(ti);
-    // 仅标最大值（选择性直接标签）
     if (v === Math.max(...rows.map(rr => rr[key] || 0))) {
       const lbl = document.createElementNS(NS, "text");
-      lbl.setAttribute("x", x + barW / 2); lbl.setAttribute("y", y - 6);
-      lbl.setAttribute("text-anchor", "middle"); lbl.setAttribute("font-size", "12");
+      lbl.setAttribute("x", x + barW / 2); lbl.setAttribute("y", y - 5);
+      lbl.setAttribute("text-anchor", "middle"); lbl.setAttribute("font-size", "11");
       lbl.setAttribute("fill", "var(--ink-2)");
       lbl.textContent = v + valueLabel;
       svg.appendChild(lbl);
@@ -524,7 +405,7 @@ function stageColor(stage) {
   if (stage.indexOf("高潮") >= 0) return "var(--up)";
   if (stage.indexOf("冰点") >= 0) return "var(--down)";
   if (stage.indexOf("修复") >= 0) return "var(--warn)";
-  return "var(--accent)"; // 退潮
+  return "var(--accent)";
 }
 
 function renderKPI() {
@@ -532,16 +413,20 @@ function renderKPI() {
   const cards = [
     { label: "情绪温度", value: emo.available ? k.emotion_score : "—",
       valueCls: emo.available ? stageColor(k.emotion_stage) : "",
+      bar: emo.available ? stageColor(k.emotion_stage) : "var(--accent)",
       sub: emo.available ? '<span class="chip" style="color:' + stageColor(k.emotion_stage)
         + '">' + esc(k.emotion_stage) + "</span>" : "数据不足" },
-    { label: "涨停家数", value: k.zt_count, valueCls: "var(--up)" },
-    { label: "连板家数", value: k.lianban_count, valueCls: "var(--up)" },
-    { label: "空间板高度", value: k.max_lb + " 板", valueCls: "var(--accent)", sub: esc(k.max_lb_stock) },
-    { label: "炸板率", value: pct(k.break_rate, 0), valueCls: "var(--warn)" },
-    { label: "跌停家数", value: k.dt_count, valueCls: k.dt_count > 0 ? "var(--down)" : "" },
+    { label: "涨停家数", value: k.zt_count, valueCls: "var(--up)", bar: "var(--up)" },
+    { label: "连板家数", value: k.lianban_count, valueCls: "var(--up)", bar: "var(--accent-2)" },
+    { label: "空间板高度", value: k.max_lb + " 板", valueCls: "var(--accent)", bar: "var(--accent)",
+      sub: esc(k.max_lb_stock) },
+    { label: "炸板率", value: pct(k.break_rate, 0), valueCls: "var(--warn)", bar: "var(--warn)" },
+    { label: "跌停家数", value: k.dt_count, valueCls: k.dt_count > 0 ? "var(--down)" : "",
+      bar: "var(--down)" },
   ];
   document.getElementById("kpi").innerHTML = cards.map(c =>
-    '<div class="kpi"><div class="label">' + esc(c.label) + '</div>'
+    '<div class="kpi" style="border-left-color:' + (c.bar || "var(--accent)") + '">'
+    + '<div class="label">' + esc(c.label) + '</div>'
     + '<div class="value" style="color:' + c.valueCls + '">' + esc(c.value) + "</div>"
     + (c.sub ? '<div class="sub">' + c.sub + "</div>" : "") + "</div>").join("");
 }
@@ -554,7 +439,7 @@ function renderCharts() {
   if (!hasData) {
     ["chart-emotion", "chart-counts", "chart-height", "chart-breakrate"].forEach(id => {
       const el = document.getElementById(id);
-      el.innerHTML = '<text x="450" y="150" text-anchor="middle" font-size="14" fill="var(--ink-3)">数据不足</text>';
+      el.innerHTML = '<text x="450" y="110" text-anchor="middle" font-size="13" fill="var(--ink-3)">数据不足</text>';
     });
     return;
   }
@@ -567,12 +452,12 @@ function renderCharts() {
     ];
     drawLineChart(document.getElementById("chart-emotion"), rows,
       [{ key: "emotion", label: "情绪温度", color: "var(--accent)", fmt: v => Math.round(v), lastLabel: true }],
-      { yMax: 100, bands, highlightLast: true, yFmt: v => Math.round(v) });
+      { yMax: 100, bands, highlightLast: true, yFmt: v => Math.round(v), height: 220 });
     setLegend(document.getElementById("leg-emotion"),
       [{ color: "var(--accent)", label: "情绪温度分" + (DATA.emotion.stage ? " · 今日" + DATA.emotion.stage : "") }]);
   } else {
     document.getElementById("chart-emotion").innerHTML =
-      '<text x="450" y="150" text-anchor="middle" font-size="14" fill="var(--ink-3)">情绪温度数据不足</text>';
+      '<text x="450" y="110" text-anchor="middle" font-size="13" fill="var(--ink-3)">情绪温度数据不足</text>';
   }
 
   drawLineChart(document.getElementById("chart-counts"), rows,
@@ -580,96 +465,20 @@ function renderCharts() {
      { key: "lianban_count", label: "连板", color: "var(--accent-2)" },
      { key: "break_count", label: "炸板", color: "var(--accent-3)" }],
     { yMax: Math.max(20, ...rows.map(r => Math.max(r.zt_count, r.break_count))) * 1.15,
-      highlightLast: true, yFmt: v => Math.round(v) });
+      highlightLast: true, yFmt: v => Math.round(v), height: 220 });
   setLegend(document.getElementById("leg-counts"),
     [{ color: "var(--accent)", label: "涨停" },
      { color: "var(--accent-2)", label: "连板" },
      { color: "var(--accent-3)", label: "炸板" }]);
 
   drawBarChart(document.getElementById("chart-height"), rows, "max_lb",
-    { color: "var(--accent)", valueLabel: " 板", yFmt: v => Math.round(v) });
+    { color: "var(--accent)", valueLabel: " 板", yFmt: v => Math.round(v), height: 180 });
 
   drawLineChart(document.getElementById("chart-breakrate"), rows,
     [{ key: "break_rate", label: "炸板率", color: "var(--accent-2)", fmt: v => pct(v), lastLabel: true }],
-    { yMax: 1, highlightLast: true, yFmt: v => pct(v, 0) });
+    { yMax: 1, highlightLast: true, yFmt: v => pct(v, 0), height: 180 });
   setLegend(document.getElementById("leg-breakrate"),
     [{ color: "var(--accent-2)", label: "炸板率" }]);
-}
-
-function renderLadder() {
-  const ld = DATA.ladder;
-  const el = document.getElementById("ladder");
-  if (!ld.ladder.length) { el.innerHTML = '<div class="empty">当日无涨停或数据不足</div>'; return; }
-  const rows = ld.ladder.map(r =>
-    "<tr><td>" + esc(r.height) + "板</td><td class='num'>" + r.count + "</td>"
-    + "<td>" + esc((r.stocks || []).join(" / ") || "—") + "</td>"
-    + "<td>" + weakCell(r.weak) + "</td></tr>").join("");
-  const prom = Object.keys(ld.promotion || {}).map(k =>
-    esc(k) + " " + pct(ld.promotion[k])).join("  ");
-  el.innerHTML = "<table><thead><tr><th>高度</th><th class='num'>数量</th>"
-    + "<th>代表个股</th><th>炸板 / 弱封</th></tr></thead><tbody>" + rows + "</tbody></table>"
-    + (prom ? '<div class="sub" style="margin-top:8px">晋级率：' + prom + "</div>" : "");
-}
-
-function renderThemes() {
-  const el = document.getElementById("themes");
-  const ts = (DATA.themes || []).slice().sort((a, b) => (b.is_main ? 1 : 0) - (a.is_main ? 1 : 0));
-  if (!ts.length) { el.innerHTML = '<div class="empty">当日题材归类为空</div>'; return; }
-  const rows = ts.map(t =>
-    "<tr><td>" + esc(t.theme_name) + (t.is_main ? ' <span class="chip">主线</span>' : "") + "</td>"
-    + "<td class='num'>" + t.member_count + "</td>"
-    + "<td class='num'>" + t.max_lb + " 板</td>"
-    + "<td>" + esc(t.stage || "") + "</td>"
-    + "<td>" + esc((t.leader || {}).name || "—") + "</td></tr>").join("");
-  el.innerHTML = "<table><thead><tr><th>题材</th><th class='num'>家数</th>"
-    + "<th class='num'>最高身位</th><th>阶段</th><th>龙头</th></tr></thead><tbody>"
-    + rows + "</tbody></table>";
-}
-
-function renderBreak() {
-  const b = DATA.break, el = document.getElementById("break");
-  if (!b.table.length) {
-    el.innerHTML = '<div class="empty">当日炸板家数 ' + b.break_count + "，炸板率 "
-      + pct(b.break_rate) + "（无个股明细）</div>";
-    return;
-  }
-  const rows = b.table.map(r =>
-    "<tr><td>" + esc(r.code + " " + r.name) + "</td><td>" + esc(r.industry || "") + "</td>"
-    + "<td class='num'>" + r.break_times + "</td>"
-    + "<td class='num'><span class='" + upDown(r.up_pct) + "'>" + pctPct(r.up_pct, 2) + "</span></td>"
-    + "<td class='num'>" + esc(fmtMoney(r.main_net_inflow)) + "</td>"
-    + "<td>" + esc(r.signal || "") + "</td></tr>").join("");
-  el.innerHTML = "<table><thead><tr><th>代码 名称</th><th>行业</th><th class='num'>炸板次数</th>"
-    + "<th class='num'>收盘涨幅</th><th class='num'>主力净流入</th><th>信号</th></tr></thead><tbody>"
-    + rows + "</tbody></table>";
-}
-
-function renderLhb() {
-  const l = DATA.lhb, el = document.getElementById("lhb");
-  const ov = l.overview || {};
-  if (!ov.stock_count) { el.innerHTML = '<div class="empty">（当日龙虎榜未更新——需盘后 18:00 之后）</div>'; return; }
-  const kpis = ["上榜 " + ov.stock_count + " 家", "净买额 " + fmtMoney(ov.total_net_amt),
-    "机构上榜 " + (ov.inst_stock_count || 0) + " 家"]
-    .map(t => "<span class='chip'>" + esc(t) + "</span>").join(" ");
-  const rank = (l.net_rank || []).slice(0, 10).map(r =>
-    "<tr><td>" + esc(r.code + " " + r.name) + "</td>"
-    + "<td class='num'><span class='" + upDown(r.change_rate) + "'>" + pctPct(r.change_rate, 2) + "</span></td>"
-    + "<td class='num'>" + esc(fmtMoney(r.net_amt)) + "</td>"
-    + "<td>" + esc((r.reasons || []).join("；").slice(0, 40)) + "</td></tr>").join("");
-  let hm = "";
-  if ((l.hotmoney || []).length) {
-    hm = "<h3 style='font-size:13px;color:var(--ink-2);margin:14px 0 6px'>知名游资动向</h3><table>"
-      + "<thead><tr><th>游资</th><th class='num'>净买总额</th><th>标的</th></tr></thead><tbody>"
-      + l.hotmoney.slice(0, 8).map(h =>
-        "<tr><td>" + esc(h.tag || "") + (h.style_cn ? "（" + esc(h.style_cn) + "）" : "") + "</td>"
-        + "<td class='num'>" + esc(fmtMoney(h.net_amt)) + "</td>"
-        + "<td>" + esc((h.stocks || []).slice(0, 3).map(s =>
-          s.code + " " + s.stock_name).join("、")) + "</td></tr>").join("")
-      + "</tbody></table>";
-  }
-  el.innerHTML = "<div style='margin-bottom:10px'>" + kpis + "</div>"
-    + "<table><thead><tr><th>代码 名称</th><th class='num'>涨幅</th>"
-    + "<th class='num'>净买额</th><th>上榜原因</th></tr></thead><tbody>" + rank + "</tbody></table>" + hm;
 }
 
 function renderTrendSummary() {
@@ -687,7 +496,7 @@ function renderTrendSummary() {
     + "<td>" + esc((r.missing || []).join("、")) + "</td></tr>").join("");
   el.innerHTML = "<table><thead><tr><th>日期</th><th class='num'>涨停</th><th class='num'>连板</th>"
     + "<th class='num'>最高板</th><th class='num'>炸板</th><th class='num'>炸板率</th>"
-    + "<th class='num'>跌停</th><th class='num'>情绪温度</th><th>缺失</th></tr></thead><tbody>"
+    + "<th class='num'>跌停</th><th class='num'>情绪</th><th>缺失</th></tr></thead><tbody>"
     + trs + "</tbody></table>";
 }
 
@@ -715,10 +524,6 @@ function init() {
   renderCharts();
   renderTrendSummary();
   renderEmotionComp();
-  renderLadder();
-  renderThemes();
-  renderBreak();
-  renderLhb();
 }
 document.addEventListener("DOMContentLoaded", init);
 </script>
@@ -728,9 +533,12 @@ document.addEventListener("DOMContentLoaded", init);
 
 
 def render_html(payload: dict, llm_text: str = "") -> str:
-    """渲染自包含 HTML。数据经 JSON 注入 `const DATA`，`</` 转义防断 `<script>`。"""
+    """渲染自包含 HTML。数据经 JSON 注入 `const DATA`，`</` 转义防断 `<script>`。
+
+    llm_text 参数保留兼容旧调用方，已忽略（看板不再含 AI 解读）。
+    """
+    del llm_text  # 兼容签名，不再注入
     data_json = _compact_json(payload).replace("</", "<\\/")
-    llm_html = html.escape(llm_text.strip()) if llm_text and llm_text.strip() else '<span class="llm-fallback">（未生成解读）</span>'
     ymd = str(payload.get("trade_date", ""))
     title = f"{ymd[:4]}-{ymd[4:6]}-{ymd[6:]}" if len(ymd) == 8 else ymd
     return (
@@ -738,7 +546,6 @@ def render_html(payload: dict, llm_text: str = "") -> str:
         .replace("__TITLE__", title)
         .replace("__WEEKDAY__", str(payload.get("weekday", "")))
         .replace("__N_DAYS__", str(payload.get("n_days", "")))
-        .replace("__LLM_TEXT__", llm_html)
         .replace("__DATA_JSON__", data_json)
     )
 
@@ -748,7 +555,7 @@ _ERROR_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>数据看板生成失败</title>
+<title>数据看板加载失败</title>
 <style>
 body { margin:0; font-family:system-ui,"Microsoft YaHei",sans-serif; background:#0d1117; color:#e6edf3; }
 .box { max-width:680px; margin:48px auto; padding:24px 28px; background:#161b22; border:1px solid #30363d; border-radius:10px; }
@@ -759,7 +566,7 @@ p { color:#8b949e; font-size:14px; line-height:1.6; }
 </head>
 <body>
 <div class="box">
-  <h1>数据看板生成失败（__DATE__）</h1>
+  <h1>数据看板加载失败（__DATE__）</h1>
   <p>__MSG__</p>
   <p class="sub">可能原因：网络不通（东财接口）、当日行情数据尚未完整，或接口临时限流。可稍后重试，或先确认该日复盘数据已采集。</p>
 </div>
@@ -768,7 +575,7 @@ p { color:#8b949e; font-size:14px; line-height:1.6; }
 
 
 def render_error_html(trade_date: str, message: str) -> str:
-    """看板生成失败时的自包含错误页（供 web iframe 用，避免裸 500 白屏）。
+    """看板加载失败时的自包含错误页（供 web iframe 用，避免裸 500 白屏）。
 
     数据经 html.escape 转义（错误消息可能含异常文本/特殊字符，日期也一并转义防注入），
     不落库、不缓存。
@@ -787,28 +594,25 @@ def generate_dashboard(
     *,
     n_days: int = DEFAULT_N_DAYS,
     api_key: str | None = None,
-    no_llm: bool = False,
+    no_llm: bool = True,
     out_path: str | Path | None = None,
 ) -> str:
     """生成数据看板 HTML 并落盘，返回文本。
 
-    流程：collect(n_days) → compute → build_trend → （可选 LLM 解读）→ render_html → 落盘。
-    out_path 缺省：output/{trade_date}_看板.html。LLM 失败/无 key 时看板照常渲染。
+    流程：collect_dashboard → compute_dashboard → build_trend → render_html → 落盘。
+    轻量路径只拉 N 日涨停/炸板/跌停池（有 CSV 则读盘），不拉资金流/龙虎榜/概念。
+    out_path 缺省：output/{trade_date}_看板.html。
+    api_key / no_llm 保留兼容旧调用方（看板不再调用 LLM）。
     """
-    from daily_review.pipeline import collect, compute
+    del api_key, no_llm  # 兼容签名，不再使用
+    from daily_review.pipeline import collect_dashboard, compute_dashboard
 
-    print(f"[看板] 交易日 {trade_date}，近 {n_days} 个交易日")
-    collected = collect(trade_date, n_days=n_days)
-    indicators = compute(collected)
+    print(f"[看板] 交易日 {trade_date}，近 {n_days} 个交易日（轻量采集）")
+    collected = collect_dashboard(trade_date, n_days=n_days)
+    indicators = compute_dashboard(collected)
     trend = build_trend(collected, indicators, n_days)
     payload = _assemble_payload(indicators, trend, collected)
-
-    llm_text = ""
-    if not no_llm:
-        print("[看板] LLM 生成多日趋势解读（DeepSeek）...")
-        llm_text = _dashboard_interpretation(indicators, trend, api_key=api_key)
-
-    html_text = render_html(payload, llm_text)
+    html_text = render_html(payload)
 
     settings = get_settings()
     out_path = out_path or (settings.output_dir / f"{trade_date}_看板.html")
@@ -818,3 +622,13 @@ def generate_dashboard(
     print(f"\n已生成: {out_path}")
     print(f"（{len(html_text.splitlines())} 行）")
     return html_text
+
+
+def try_pregenerate_dashboard(trade_date: str, *, n_days: int = DEFAULT_N_DAYS) -> bool:
+    """复盘成功后附写看板（失败只打印，不抛异常，不阻断主流程）。返回是否成功。"""
+    try:
+        generate_dashboard(trade_date, n_days=n_days)
+        return True
+    except Exception as exc:  # noqa: BLE001 —— 预写失败不影响复盘
+        print(f"[看板] 预写失败（不影响复盘）：{type(exc).__name__}: {exc}")
+        return False

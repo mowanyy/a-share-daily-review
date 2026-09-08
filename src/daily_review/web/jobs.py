@@ -218,6 +218,17 @@ class JobManager:
 
         save_review_snapshot(indicators, job.trade_date)
 
+        # 附写图表看板（失败不阻断），Web 打开即可秒开
+        try:
+            from daily_review.dashboard import try_pregenerate_dashboard
+
+            if try_pregenerate_dashboard(job.trade_date):
+                job.logs.append("数据看板已预写")
+            else:
+                job.logs.append("数据看板预写跳过（失败，不影响复盘）")
+        except Exception as exc:  # noqa: BLE001
+            job.logs.append(f"数据看板预写异常：{type(exc).__name__}")
+
         if job.no_llm:
             job.logs.append("已跳过 LLM 报告（--no-llm）；数据与指标已就绪")
             self._set(job, step="完成（--no-llm）", progress=100, status="done")

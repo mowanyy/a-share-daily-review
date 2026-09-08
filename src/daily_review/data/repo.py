@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -11,12 +12,19 @@ import pandas as pd
 
 from daily_review.config import get_settings
 
+# 分日数据目录命名白名单（v0.36.2 安全修复）：此前 `data/{trade_date}/` 直接拼用户/LLM
+# 传入的日期，`..\`（Windows 反斜杠也是路径分隔符）可穿越到项目外建目录/读写 CSV。
+_DATE_RE = re.compile(r"^\d{8}$")
+
 
 def _date_dir(trade_date: str | None = None) -> Path:
     settings = get_settings()
     if trade_date is None:
         trade_date = datetime.today().strftime("%Y%m%d")
-    path = settings.data_dir / str(trade_date)
+    trade_date = str(trade_date)
+    if not _DATE_RE.fullmatch(trade_date):
+        raise ValueError(f"trade_date 需为 YYYYMMDD（收到：{trade_date!r}）")
+    path = settings.data_dir / trade_date
     path.mkdir(parents=True, exist_ok=True)
     return path
 

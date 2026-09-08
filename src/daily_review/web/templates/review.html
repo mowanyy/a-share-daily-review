@@ -148,8 +148,8 @@ function showResult(j){
     + (j.strategy_name ? ' · ' + j.strategy_name : '')
     + (j.no_llm ? ' · 无 LLM' : '');
   if(j.task_type === 'data_update'){
-    /* 数据更新：显示日志，无报告 */
-    document.getElementById('report').innerHTML = '<pre>' + (j.logs || []).join('\n') + '</pre>';
+    /* 数据更新：显示日志，无报告（日志含 LLM 错误文案等动态文本，v0.36.2 起转义防注入） */
+    document.getElementById('report').innerHTML = '<pre>' + esc((j.logs || []).join('\n')) + '</pre>';
   } else {
     document.getElementById('report').innerHTML = reportHtml;
   }

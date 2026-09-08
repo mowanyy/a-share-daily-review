@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +16,11 @@ from daily_review.config import get_settings
 
 # 保留最近对话轮数
 _MAX_ROUNDS = 10
+
+# chat_id 白名单（v0.36.2 安全修复）：此前 `data/chat_sessions/{chat_id}.json` 直接拼
+# 文件名，异常 chat_id（含 `..\`/`../`）可读写目录外 .json。飞书 chat_id 为 `oc_xxx`
+# 纯 ASCII，`\w`（含下划线）+ 连字符已足够；非法 id 抛 ValueError，不触碰文件系统。
+_CHAT_ID_RE = re.compile(r"^[\w\-]{1,64}$")
 
 
 class ChatSessionManager:
@@ -40,6 +46,8 @@ class ChatSessionManager:
         self._sessions_dir.mkdir(parents=True, exist_ok=True)
 
     def _path(self, chat_id: str) -> Path:
+        if not chat_id or not _CHAT_ID_RE.fullmatch(chat_id):
+            raise ValueError(f"非法 chat_id（只允许字母/数字/下划线/连字符，长度≤64）：{chat_id!r}")
         return self._sessions_dir / f"{chat_id}.json"
 
     # ---------------------------------------------------------------- 公共接口

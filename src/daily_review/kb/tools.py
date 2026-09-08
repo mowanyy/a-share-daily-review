@@ -13,6 +13,7 @@ v0.35 插件化重构：工具通过 @register_tool 装饰器注册，自动构�
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 from datetime import datetime
@@ -24,6 +25,9 @@ from daily_review.pipeline import collect, compute
 # 单次工具响应体量上限（超限截断并注明，防长池子撑爆上下文）
 ZT_POOL_CAP = 60
 THEME_MEMBERS_CAP = 30
+
+# 工具 trade_date 参数白名单（v0.36.2 安全修复：防 LLM 参数注入路径穿越）
+_DATE_RE = re.compile(r"^\d{8}$")
 
 # ---------------------------------------------------------------- 进程级采集缓存池（v0.35.5）
 #
@@ -159,7 +163,16 @@ class DataToolContext:
         self.default_date = default_date or default_trade_date()
 
     def resolve_date(self, arg: str | None) -> str:
-        return (arg or self.default_date).strip()
+        """解析工具 trade_date 参数（v0.36.2 安全修复）。
+
+        只接受 YYYYMMDD——此前直接把 LLM 生成的参数拼进 `data/{date}/` 文件路径，
+        `..\`/`../` 可穿越到项目外建目录/读写 CSV（工具 schema 已写明格式，非法值
+        在此被拒，工具返回 error JSON 而非落盘/读盘）。
+        """
+        date = (arg or self.default_date).strip()
+        if not _DATE_RE.fullmatch(date):
+            raise ValueError(f"trade_date 需为 YYYYMMDD（收到：{date!r}）")
+        return date
 
     def collected(self, trade_date: str) -> dict:
         with _POOL_LOCK:
@@ -543,7 +556,8 @@ def execute_tool(name: str, args: dict, ctx: DataToolContext) -> tuple[str, floa
         duration_ms = (time.perf_counter() - t0) * 1000
         return result, duration_ms
     except Exception as exc:  # noqa: BLE001 — 采集/指标失败不中断对话
-        result = _compact_json({"error": f"{name} 执行失败：{exc}", "args": args})
+        # 不回显 args（v0.36.2：防工具参数原样注入 LLM 上下文的回显噪音）
+        result = _compact_json({"error": f"{name} 执行失败：{exc}"})
         duration_ms = (time.perf_counter() - t0) * 1000
         return result, duration_ms
 

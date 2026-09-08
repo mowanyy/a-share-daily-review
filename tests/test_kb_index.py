@@ -95,3 +95,37 @@ def test_rrf_scores_positive():
     # b 在两榜都出现 → 融合分最高；a 仅在榜首榜 rank0 → 高于 d（仅次榜 rank0）
     assert scores["b"] > scores["a"] > scores["d"]
     assert scores["c"] < scores["d"]
+
+
+# ---------------------------------------------------------------- v0.36.2 安全修复：向量器 pickle 指纹校验
+
+
+def test_manifest_verify_vectorizer_detects_tamper(tmp_path):
+    """tfidf.pkl 指纹：文件被篡改 → 校验失败（拒绝 pickle 加载）。"""
+    from daily_review.kb.manifest import Manifest, sha256_file
+
+    f = tmp_path / "tfidf.pkl"
+    f.write_bytes(b"malicious pickle payload")
+    m = Manifest(vectorizer_sha256=sha256_file(f))
+    assert m.verify_vectorizer(f) is True
+    f.write_bytes(b"malicious pickle payload tampered!")
+    assert m.verify_vectorizer(f) is False
+    # 旧版缓存无指纹 → 拒绝（强制重建一次）
+    assert Manifest(vectorizer_sha256="").verify_vectorizer(f) is False
+
+
+def test_load_rebuilds_on_tampered_pkl(kb_root, index):
+    """篡改缓存向量器文件后，快路径 load 拒绝并触发重建（不加载可疑 pickle）。"""
+    from daily_review.kb.index import KnowledgeIndex
+    from daily_review.kb.manifest import Manifest
+
+    n0 = len(index.chunks)
+    pkl = kb_root / ".kb_cache" / "tfidf.pkl"
+    pkl.write_bytes(pkl.read_bytes() + b"TAMPER")
+    idx2 = KnowledgeIndex(kb_root, use_embedding=False)
+    idx2.ensure_ready()  # 指纹不符 → 自动重建
+    assert len(idx2.chunks) == n0
+    assert idx2.search("炸板率", top_k=3)
+    # 重建后 manifest 记录了新的向量器指纹
+    m = Manifest.load(kb_root / ".kb_cache")
+    assert m is not None and m.vectorizer_sha256

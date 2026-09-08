@@ -104,6 +104,11 @@ def _load_body(manager_id: str) -> str:
 
 # ---------------------------------------------------------------- 会话管理
 
+# manager_id 白名单：字母/数字/下划线/中文/连字符（\w 在 Python 3 默认 Unicode 匹配含中文），
+# 最长 64 字符。禁止 `/ \ . : * ? " < > |` 与空白——防路径穿越（v0.36.2 安全修复：
+# 此前 `data/fund_sessions/{manager_id}.json` 直接拼文件名，`..\`/`../` 可读写目录外 .json）。
+_MANAGER_ID_RE = re.compile(r"^[\w\-]{1,64}$")
+
 
 def _session_dir() -> Path:
     d = get_settings().data_dir / "fund_sessions"
@@ -112,6 +117,8 @@ def _session_dir() -> Path:
 
 
 def _session_path(manager_id: str) -> Path:
+    if not manager_id or not _MANAGER_ID_RE.fullmatch(manager_id):
+        raise ManagerNotFound(f"未知基金经理：{manager_id}")
     return _session_dir() / f"{manager_id}.json"
 
 

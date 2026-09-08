@@ -2,6 +2,7 @@
 
 collect(trade_date)  采集池子/时间线/资金流/行业映射/龙虎榜，落盘 data/{date}/*.csv（有缓存则复用）
 compute(collected)   指标层：连板梯队 + 题材归类 + 炸板净流入 + 龙虎榜游资
+collect_dashboard / compute_dashboard  看板轻量路径：仅 N 日 zt/zb/dt + 情绪/KPI
 generate_report()    见 llm.reporter（CLI 无 --no-llm 时调用）
 """
 
@@ -400,4 +401,94 @@ def compute(collected: dict) -> dict:
         "zt_pool": zt_pool,
         "concept_boards": concept_boards,
         "timeline_dates": collected["timeline_dates"],
+    }
+
+
+# ---------------------------------------------------------------- 看板轻量路径（v0.36.1）
+
+def collect_dashboard(trade_date: str, n_days: int = 10) -> dict:
+    """看板专用轻量采集：仅 N 日涨停/炸板/跌停池，不拉资金流/龙虎榜/概念/行业。
+
+    复用 `_cached` / `_fetch_opt`：已有 CSV 且归属校验通过则只读盘；缺失日才联网。
+    返回 slim dict，字段足够 `compute_dashboard` + `build_trend` / `_assemble_payload`。
+    """
+    print(f"[看板采集] 交易日 {trade_date}（轻量时间线 {n_days} 日）")
+
+    now = datetime.now()
+    today = now.strftime("%Y%m%d")
+    after_close = trade_date == today and now.time() >= datetime.strptime("15:00", "%H:%M").time()
+    fresh = not after_close
+
+    zt = _cached("zt_pool", trade_date, lambda: em.fetch_zt_pool(trade_date), use_cache=fresh)
+    zb, zb_ok = _fetch_opt("zb_pool", trade_date, lambda: em.fetch_zb_pool(trade_date), use_cache=fresh)
+    dt, dt_ok = _fetch_opt("dt_pool", trade_date, lambda: em.fetch_dt_pool(trade_date), use_cache=fresh)
+    print(f"  涨停 {len(zt)} / 炸板 {len(zb)} / 跌停 {len(dt)}")
+
+    dates = em.resolve_recent_trade_dates(trade_date, n_days=n_days)
+    if trade_date not in dates:
+        dates = [trade_date] + dates
+    print(f"  时间线 {len(dates)} 个交易日: {','.join(dates)}")
+
+    # 历史日（旧→新，不含今日）：每日 zt/zb/dt
+    hist_days: list[dict] = []
+    for d in reversed([x for x in dates if x != trade_date]):
+        pool = _cached("zt_pool", d, lambda d=d: em.fetch_zt_pool(d),
+                       use_cache=(d != today or fresh))
+        zb_i, ok_zb = _fetch_opt("zb_pool", d, lambda d=d: em.fetch_zb_pool(d),
+                                 use_cache=(d != today or fresh))
+        dt_i, ok_dt = _fetch_opt("dt_pool", d, lambda d=d: em.fetch_dt_pool(d),
+                                 use_cache=(d != today or fresh))
+        hist_days.append({
+            "date": d, "zt": pool, "zb": zb_i, "dt": dt_i,
+            "zb_ok": ok_zb, "dt_ok": ok_dt,
+        })
+
+    is_intraday = trade_date == today and now.hour < 15
+    return {
+        "trade_date": trade_date,
+        "zt": zt,
+        "zb": zb,
+        "dt": dt,
+        "hist_days": hist_days,
+        "zb_ok": zb_ok,
+        "dt_ok": dt_ok,
+        "is_intraday": is_intraday,
+        "timeline_dates": dates,
+    }
+
+
+def _dashboard_kpi(zt: pd.DataFrame, zb: pd.DataFrame) -> dict:
+    """今日 KPI 标量（对齐 ladder 汇总字段，不建梯队表、不拉长高度序列）。"""
+    from daily_review.analysis.ladder import _max_lb_stock
+
+    zt_count = int(len(zt))
+    lianban_count = int((zt["lb_num"] >= 2).sum()) if zt_count else 0
+    max_lb = int(zt["lb_num"].max()) if zt_count else 0
+    break_count = int(len(zb))
+    break_rate = round(break_count / (zt_count + break_count), 4) if (zt_count + break_count) else 0.0
+    return {
+        "zt_count": zt_count,
+        "lianban_count": lianban_count,
+        "max_lb": max_lb,
+        "max_lb_stock": _max_lb_stock(zt) if zt_count else "",
+        "break_rate": break_rate,
+    }
+
+
+def compute_dashboard(collected: dict) -> dict:
+    """看板专用指标：情绪温度 + 今日 KPI 标量（无题材/炸板资金/龙虎榜/长高度）。"""
+    emotion = compute_emotion(
+        collected["zt"],
+        collected["zb"],
+        collected["dt"],
+        collected.get("hist_days", []),
+        zb_ok=collected.get("zb_ok", True),
+        dt_ok=collected.get("dt_ok", True),
+        is_intraday=collected.get("is_intraday", False),
+    )
+    return {
+        "trade_date": collected["trade_date"],
+        "emotion": emotion,
+        "ladder": _dashboard_kpi(collected["zt"], collected["zb"]),
+        "timeline_dates": collected.get("timeline_dates", []),
     }

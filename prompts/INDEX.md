@@ -19,7 +19,7 @@
 | `system.analyst` | [system/复盘分析师.md](system/复盘分析师.md) | report | 各模块摘要 | 全文复盘框架与纪律 | draft |
 | `system.assistant` | [system/问答助手.md](system/问答助手.md) | qa | 知识库(RAG)片段 + 工具调用结果 | 对话回答 | active |
 | `module.emotion` | [modules/情绪温度.md](modules/情绪温度.md) | report | 涨停/炸板/跌停池、多日时序 | 情绪温度章节 | draft |
-| `module.dashboard` | [modules/数据看板.md](modules/数据看板.md) | report | 多日时序、涨停/炸板/跌停池、连板统计、情绪温度 | 多日趋势解读一段 | draft |
+| `module.dashboard` | [modules/数据看板.md](modules/数据看板.md) | report | （已停用） | （已停用）图表看板不再调 LLM | deprecated |
 | `module.ladder` | [modules/连板梯队.md](modules/连板梯队.md) | report | 涨停池、连板统计 | 梯队章节 | draft |
 | `module.theme` | [modules/题材周期与归类.md](modules/题材周期与归类.md) | report | 题材+成分+多日时序 | 题材归类章节 | draft |
 | `module.break` | [modules/炸板净流入.md](modules/炸板净流入.md) | report | 炸板池、资金流 | 炸板资金章节 | draft |
@@ -53,9 +53,8 @@
 	  module.overnight     → 隔夜预案（消息面汇总 → 题材联动 → 关注方向）
 	  module.open_strategy → 开盘策略（竞价总览 → 有机会个股清单 → 开盘执行提示）
 
-看板模式（数据看板 + LLM 多日趋势解读）
-  module.dashboard → 「多日趋势解读」一段（数据看板主体为程序核算图表，
-                     本 prompt 只负责顶部一段趋势解读；无 key/失败时降级为「（未生成解读）」）
+看板模式（数据看板，v0.36 起纯图表）
+  程序核算 KPI + SVG 趋势图 + 趋势摘要/情绪成分表（不再调用 module.dashboard）
 
 问答模式（交互对话，v0.7）
   system.assistant
@@ -68,6 +67,7 @@
 
 - `draft`：结构已定、语义待打磨、**尚未接入代码**
 - `active`：已接入生成流程，可被程序调用
+- `deprecated`：历史契约保留，代码不再调用
 
 ## 新增 Prompt 的登记步骤
 
