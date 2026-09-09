@@ -312,6 +312,45 @@ def _cmd_open(args) -> None:
     return 0
 
 
+def _cmd_eval(args) -> int:
+    """评估 Agent 生成内容（v0.37 L0/L1）：确定性校验 + 快照回比，零 LLM 零网络。"""
+    import json
+
+    from daily_review.eval import evaluate_report
+    from daily_review.web.audit import AuditDB
+
+    trade_date = args.date or _probe_recent_date()
+    if not args.date:
+        print(f"[eval] 缺省交易日: {trade_date}")
+
+    report = evaluate_report(trade_date, args.type)
+
+    # 结果入库（失败不阻断评估）
+    try:
+        AuditDB().log_evaluation(
+            report.trade_date,
+            report.report_type,
+            json.dumps([c.to_dict() for c in report.checks], ensure_ascii=False),
+            report.pass_count,
+            report.fail_count,
+            report.skip_count,
+        )
+    except Exception as exc:  # noqa: BLE001 —— 审计失败不影响评估结果
+        print(f"[eval] ⚠ 审计入库失败（不影响评估结果）：{exc}")
+
+    if args.json:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, default=str))
+    else:
+        print(
+            f"[eval] {report.trade_date} {args.type}："
+            f"✅ {report.pass_count} / ❌ {report.fail_count} / ⚠ {report.warn_count} / ⏭ {report.skip_count}"
+        )
+        for c in report.checks:
+            if c.level in ("error", "warn"):
+                print(f"  [{c.level.upper()}] {c.id}: {c.message}")
+    return 0 if report.fail_count == 0 else 1
+
+
 def _cmd_push(args) -> int:
     """生成报告并推送飞书群机器人（v0.21，供 GitHub Actions 定时 / 本地手动调用）。"""
     from daily_review.push import REPORT_TYPE_LABEL, push_report
@@ -793,6 +832,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_open.add_argument("--date", default="", help="今日交易日 YYYYMMDD，缺省探测最近交易日")
     p_open.set_defaults(func=_cmd_open)
+
+    p_eval = sub.add_parser(
+        "eval",
+        help="评估 Agent 生成内容（v0.37）：L0 确定性校验 + L1 与权威快照回比，零 LLM 零网络",
+    )
+    p_eval.add_argument("--date", default="", help="交易日 YYYYMMDD，缺省探测最近交易日")
+    p_eval.add_argument(
+        "--type", choices=["review", "plan", "open"], default="review",
+        help="报告类型：review=复盘 / plan=隔夜预案 / open=开盘策略",
+    )
+    p_eval.add_argument("--json", action="store_true", help="输出结构化 JSON（供脚本/CI 消费）")
+    p_eval.set_defaults(func=_cmd_eval)
 
     p_push = sub.add_parser(
         "push",

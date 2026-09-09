@@ -9,6 +9,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.37.0`：**Agent 内容评估（L0/L1：确定性校验 + 数据回比，零 LLM 零网络）**。新增 `eval/` 包（`models.py` 数据类 + `checks.py` L0 规则 + `extract.py` 数字抽取 + `verify.py` L1 回比）+ CLI `eval` 子命令 + audit.db `evaluations` 表 + 14 例回归测试。**L0（EVAL-001~006）**：产物存在与七章结构完整（复盘/隔夜预案/开盘策略各自契约）/交易日合法性（离线读日历不联网）/数据缺失标注纪律（快照不可用但报告缺失「数据缺失」→ warn）/合规扫描（只扫 LLM 生成章节，强荐股话术=error、交易建议词=warn，不复用 `is_compliance_risk`——其例外词表按用户提问意图设计、全文扫描会被豁免）/正文长度下限。**L1（EVAL-101~111）**：报告关键数字（情绪温度/涨停/连板/首板/最高板/龙头/炸板率/晋级率/昨日情绪温度/题材龙头）与权威快照 `data/review_snapshots/{date}.json` 回比，约数归一化 + 相对误差 5%（情绪温度绝对差 1 分），快照缺失一律 skip 不误报；plan/open 对照前日快照回比昨日情绪温度。CLI `python -m daily_review eval --date 20260806 --type review [--json]`（exit 0/1），结果写 audit.db `evaluations` 表可追溯。golden set 用真实 `output/20260806_复盘.md` 回归。**612 测试通过**。方案文档 `docs/Agent内容评估方案.md`；明确不做 LLM 互评（成本高、judge 自幻觉）。
+
 `v0.36.3`：**安全加固（产品视角评估驱动修复）——跨 Agent 递归深度防护 + Web 跨源校验 + LLM 端点限流 + Web 端合规提示 + CSV 公式注入转义**。基于 2026-09-08 产品视角安全评估修复 5 项残余风险，新增 11 例回归测试，**598 测试通过**。① **跨 Agent 递归无全局深度防护（中高，成本黑洞）**——QA `query_agent` 工具可调基金经理、基金经理 `query_qa` 工具可调回 QA，两层各有轮数上限（QA 5 / 经理 3）但**嵌套时无全局深度计数**，恶意提问可诱导「QA→基金经理→QA→…」无限递归、每层翻倍消耗 LLM 调用烧 API 额度；`agent_registry.call_agent` 增**线程级深度计数**（threading.local），嵌套超 `MAX_AGENT_DEPTH=3` 返回「调用链过深」中止链路，finally 递减归零。② **本机 Web 无跨源校验（中）**——Host 白名单只防 DNS rebinding，防不住恶意网页**直接**向 `http://127.0.0.1:5000` 发请求（此时 Host 头正确会通过）；`app.py` 新增 Origin/Referer 校验：Origin/Referer 存在且 host 不在回环白名单 → 403，两者皆无（curl/本地脚本）放行不破坏现有用法。③ **LLM 端点无限流（中，成本）**——新增 `web/ratelimit.py` 线程安全滑动窗口限流器，`/api/qa/ask` `/api/fund/analyze` `/api/agents/consult` 三端点接入，窗口超限 429 + Retry-After；默认 20 次/分钟，`WEB_LLM_RATE_LIMIT`/`WEB_LLM_RATE_WINDOW`（秒）环境变量可调；`clear_limits()` 供测试隔离。④ **Web 端无合规提示（中，产品合规）**——复用飞书网关 `is_compliance_risk`/`COMPLIANCE_REPLY`（纯函数、模块顶层零 lark 依赖、无循环导入），三个 LLM 端点命中交易建议关键词 → 同款合规拒绝话术（不调 LLM），正常回答统一追加「不构成投资建议」免责声明。⑤ **CSV 公式注入（低）**——`concept_pool.add_stocks` 的 name/note 以 `= + - @` 或制表符/回车开头时前置 `'` 前缀防 Excel 执行公式。新增回归：互调递归终止/深度归零/单层不误伤、恶意 Origin/Referer 403 + 本机放行、限流 429 与 clear 恢复、滑动窗口单测、QA/基金经理/会诊三端合规拒绝、CSV 转义。
 
 `v0.36.2`：**安全加固（AI 安全工程师全库审计 + 修复）**——Web 输入净化与供应链加固，新增 12 例回归测试，**587 测试通过**。审计结论：无 RCE / 注入类高危；XSS（md_to_html 全转义）、SQLi（全参数化）、命令注入（无 shell=True）、SSRF（host 硬编码）、密钥泄露面（v0.35.7 已清历史）经查均已防御。修复项：① **fund_agent 会话路径穿越（中高）**——`data/fund_sessions/{manager_id}.json` 直接拼文件名，`GET /api/fund/session/<id>` / `POST /api/fund/clear/<id>` 可经 `%2F` 编码 `../` 读/删项目内任意 `.json`；`_session_path` 增白名单 `^[\w\-]{1,64}$`（含中文经理名），非法 id 抛 `ManagerNotFound`，两路由捕获返 404。② **数据日期目录穿越（中）**——`repo._date_dir` / `DataToolContext.resolve_date` 此前不校验格式，QA 工具 trade_date（LLM 可控参数）可带 `..\`（Windows 路径分隔符）在项目外建目录/读写 CSV；两处统一 `^\d{8}$` 拦截，非法值工具返回 error 不落盘。③ **chat_session chat_id 白名单（纵深防御）**——同型修复 `^[\w\-]{1,64}$`，非法抛 ValueError 不触碰文件。④ **kb 向量器 pickle 指纹校验（防反序列化 RCE）**——`manifest.json` 记录 `tfidf.pkl` sha256，`load()` 验指纹后再 `pickle.load`，篡改/旧缓存→触发重建。⑤ 低危加固：审计 API limit 钳制 `[1,200]`（非数字回落默认，负数不再无界查询）；`review.html` data_update 日志 innerHTML 转义 `esc()`；`execute_tool` 异常回包去掉 `args` 回显；`create_app` 设 SECRET_KEY（`FLASK_SECRET_KEY` 环境变量或进程随机）+ `before_request` Host 白名单（127.0.0.1/localhost/::1，防 DNS rebinding）。⑥ **GitHub Actions 供应链**——三个 push workflow 的 `actions/checkout`/`setup-python`/`cache` 锁 commit SHA（tag 可重定向），`pip install -r requirements.txt`（补 pin `lark-oapi==1.7.3`，此前 `>=3.0.0` 未锁版本）。
@@ -107,6 +109,9 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review plan --date 20260812
 # 开盘策略（9:25-9:30）：竞价数据 + 隔夜预案 → output/{date}_开盘策略.md
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review open --date 20260812
+# 内容评估（v0.37）：对已生成的复盘/隔夜预案/开盘策略做确定性校验+快照回比（零 LLM 零网络；exit 0/1；--json 结构化输出）
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review eval --date 20260806 --type review
+"E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review eval --type open --json
 # Web 工作台（Flask）：战法管理 / 跑复盘（含隔夜预案/开盘策略按钮）/ 问答 / 数据看板（默认仅本机 127.0.0.1:5000；--open 用系统浏览器打开）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review web --open
 # 数据看板：近 10 个交易日 KPI + 趋势图表（单文件 output/{date}_看板.html，无 AI 文案；复盘后预写秒开）
@@ -142,6 +147,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | 路径 | 用途 | 何时读 |
 |---|---|---|
 | `docs/README.md` | **docs 文档分类索引**（需求规划/使用指南/技术参考/方案设计 四类导航 + 按场景查找指引） | 在 docs/ 找文档时先看 |
+| `docs/Agent内容评估方案.md` | Agent 内容评估方案（L0/L1 确定性校验+数据回比；v0.37 已实现） | 落地/修改评估系统时 |
 | `docs/需求分析.md` | 完整需求（模块、数据、LLM 角色、战法扩展） | 任何需求相关改动前必读 |
 | `docs/数据结构.md` | 核心数据对象字段定义 | 写数据模型 / 爬虫 / 指标时 |
 | `docs/东财接口清单.md` | 东财接口清单、风险、防封控 | 做数据采集时 |
@@ -151,7 +157,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `docs/战法规范.md` | 战法编写规范 | 新增/修改战法时 |
 | `prompts/INDEX.md` | **Prompt 总索引**（id→文件→角色→依赖→状态） | 改任何 prompt 前必读 |
 | `prompts/glossary/术语表.md` | 超短术语统一语义 | 写 prompt / 判定术语时 |
-| `src/daily_review/` | Python 包（采集层 `data/` + 指标层 `analysis/`（含 `auction.py` 竞价）+ LLM 层 `llm/`（含 `premarket.py` 盘前）+ 问答知识库 `kb/` + 数据看板 `dashboard.py` + Web 工作台 `web/`（app/routes/strategy/jobs/md/templates）+ 图形启动器 `launcher.py`/`launcher_gui.py` + 管道 `pipeline.py`） | 实现阶段 |
+| `src/daily_review/` | Python 包（采集层 `data/` + 指标层 `analysis/`（含 `auction.py` 竞价）+ LLM 层 `llm/`（含 `premarket.py` 盘前）+ 问答知识库 `kb/` + 内容评估 `eval/`（v0.37，L0/L1 确定性校验+快照回比）+ 数据看板 `dashboard.py` + Web 工作台 `web/`（app/routes/strategy/jobs/md/templates）+ 图形启动器 `launcher.py`/`launcher_gui.py` + 管道 `pipeline.py`） | 实现阶段 |
 | `knowledge/` | 个人短线知识库（`.md` 自动入库，增量重索引持续更新；含 `README.md` 说明） | 用户维护 |
 | `skills/fund-styles/` | 基金风格 skill 档案（v0.17，仅本项目内用；`kb/corpus.py` 收录供问答检索） | 做风格分析 / 导入为战法时 |
 | `AGENTS.md` / `CLAUDE.md` | AI 协作者总索引（本文件，两处同步维护） | 每次会话开始必读 |

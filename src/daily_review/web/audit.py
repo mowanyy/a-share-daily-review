@@ -9,6 +9,8 @@
 - errors:    Agent 运行中的错误（source, error_type, message）
 
 v0.35：新增 tool_calls 表，记录每次 QA 的完整工具调用链（trace）。
+
+v0.37：新增 evaluations 表，记录 Agent 生成内容的评估结果（eval 包）。
 """
 
 from __future__ import annotations
@@ -88,6 +90,17 @@ class AuditDB:
                     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
                 );
                 CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at);
+                CREATE TABLE IF NOT EXISTS evaluations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    trade_date TEXT NOT NULL,
+                    report_type TEXT NOT NULL,
+                    checks_json TEXT NOT NULL,
+                    pass_count INTEGER NOT NULL DEFAULT 0,
+                    fail_count INTEGER NOT NULL DEFAULT 0,
+                    skip_count INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+                CREATE INDEX IF NOT EXISTS idx_evaluations_created_at ON evaluations(created_at);
             """)
         finally:
             conn.close()
@@ -212,3 +225,40 @@ class AuditDB:
             "SELECT DISTINCT chat_id FROM messages WHERE chat_id IS NOT NULL ORDER BY chat_id"
         ).fetchall()
         return [r[0] for r in rows]
+
+    # ---------------------------------------------------------------- 评估记录（v0.37）
+
+    def log_evaluation(
+        self,
+        trade_date: str,
+        report_type: str,
+        checks_json: str,
+        pass_count: int,
+        fail_count: int,
+        skip_count: int,
+    ) -> None:
+        """记录一次 Agent 生成内容的评估结果。"""
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO evaluations (trade_date, report_type, checks_json, pass_count, fail_count, skip_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (trade_date, report_type, checks_json, pass_count, fail_count, skip_count),
+        )
+        conn.commit()
+
+    def recent_evaluations(self, limit: int = 50) -> list[dict]:
+        """查询最近评估记录。"""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT id, trade_date, report_type, checks_json, pass_count, fail_count, skip_count, created_at "
+            "FROM evaluations ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            {
+                "id": r[0], "trade_date": r[1], "report_type": r[2],
+                "checks_json": r[3], "pass_count": r[4], "fail_count": r[5],
+                "skip_count": r[6], "created_at": r[7],
+            }
+            for r in rows
+        ]
