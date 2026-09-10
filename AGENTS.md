@@ -9,6 +9,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.37.1`：**版本控制规划（分支策略落地）**。引入**轻量 GitHub Flow 变体**：新功能/较大改动从 main 开 `feature/<功能名>` 分支迭代开发（分支内不 bump 版本、不打 tag），完成时 `python -m pytest` 全量通过 + `git status --short` 审查 → squash 合并回 main（`git merge --squash`）→ **功能合并才 bump** MINOR 版本并打 tag；小修（bugfix/文档/环境同步/测试调整）直接提交 main 并 bump PATCH；回滚一律 `git revert`（禁 `git reset` 改写公共历史）、tag 不可移动。`data-branch`（数据快照孤儿分支）保持自动维护不动。三个 GitHub Actions workflow 只监听 schedule/dispatch，feature 分支 push 零 CI 副作用。完整规则见 `docs/版本管理.md`（第 0/2 节）。
+
 `v0.37.0`：**Agent 内容评估（L0/L1：确定性校验 + 数据回比，零 LLM 零网络）**。新增 `eval/` 包（`models.py` 数据类 + `checks.py` L0 规则 + `extract.py` 数字抽取 + `verify.py` L1 回比）+ CLI `eval` 子命令 + audit.db `evaluations` 表 + 14 例回归测试。**L0（EVAL-001~006）**：产物存在与七章结构完整（复盘/隔夜预案/开盘策略各自契约）/交易日合法性（离线读日历不联网）/数据缺失标注纪律（快照不可用但报告缺失「数据缺失」→ warn）/合规扫描（只扫 LLM 生成章节，强荐股话术=error、交易建议词=warn，不复用 `is_compliance_risk`——其例外词表按用户提问意图设计、全文扫描会被豁免）/正文长度下限。**L1（EVAL-101~111）**：报告关键数字（情绪温度/涨停/连板/首板/最高板/龙头/炸板率/晋级率/昨日情绪温度/题材龙头）与权威快照 `data/review_snapshots/{date}.json` 回比，约数归一化 + 相对误差 5%（情绪温度绝对差 1 分），快照缺失一律 skip 不误报；plan/open 对照前日快照回比昨日情绪温度。CLI `python -m daily_review eval --date 20260806 --type review [--json]`（exit 0/1），结果写 audit.db `evaluations` 表可追溯。golden set 用真实 `output/20260806_复盘.md` 回归。**612 测试通过**。方案文档 `docs/Agent内容评估方案.md`；明确不做 LLM 互评（成本高、judge 自幻觉）。
 
 `v0.36.3`：**安全加固（产品视角评估驱动修复）——跨 Agent 递归深度防护 + Web 跨源校验 + LLM 端点限流 + Web 端合规提示 + CSV 公式注入转义**。基于 2026-09-08 产品视角安全评估修复 5 项残余风险，新增 11 例回归测试，**598 测试通过**。① **跨 Agent 递归无全局深度防护（中高，成本黑洞）**——QA `query_agent` 工具可调基金经理、基金经理 `query_qa` 工具可调回 QA，两层各有轮数上限（QA 5 / 经理 3）但**嵌套时无全局深度计数**，恶意提问可诱导「QA→基金经理→QA→…」无限递归、每层翻倍消耗 LLM 调用烧 API 额度；`agent_registry.call_agent` 增**线程级深度计数**（threading.local），嵌套超 `MAX_AGENT_DEPTH=3` 返回「调用链过深」中止链路，finally 递减归零。② **本机 Web 无跨源校验（中）**——Host 白名单只防 DNS rebinding，防不住恶意网页**直接**向 `http://127.0.0.1:5000` 发请求（此时 Host 头正确会通过）；`app.py` 新增 Origin/Referer 校验：Origin/Referer 存在且 host 不在回环白名单 → 403，两者皆无（curl/本地脚本）放行不破坏现有用法。③ **LLM 端点无限流（中，成本）**——新增 `web/ratelimit.py` 线程安全滑动窗口限流器，`/api/qa/ask` `/api/fund/analyze` `/api/agents/consult` 三端点接入，窗口超限 429 + Retry-After；默认 20 次/分钟，`WEB_LLM_RATE_LIMIT`/`WEB_LLM_RATE_WINDOW`（秒）环境变量可调；`clear_limits()` 供测试隔离。④ **Web 端无合规提示（中，产品合规）**——复用飞书网关 `is_compliance_risk`/`COMPLIANCE_REPLY`（纯函数、模块顶层零 lark 依赖、无循环导入），三个 LLM 端点命中交易建议关键词 → 同款合规拒绝话术（不调 LLM），正常回答统一追加「不构成投资建议」免责声明。⑤ **CSV 公式注入（低）**——`concept_pool.add_stocks` 的 name/note 以 `= + - @` 或制表符/回车开头时前置 `'` 前缀防 Excel 执行公式。新增回归：互调递归终止/深度归零/单层不误伤、恶意 Origin/Referer 403 + 本机放行、限流 429 与 clear 恢复、滑动窗口单测、QA/基金经理/会诊三端合规拒绝、CSV 转义。
@@ -153,7 +155,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 | `docs/东财接口清单.md` | 东财接口清单、风险、防封控 | 做数据采集时 |
 | `docs/开发环境.md` | **Windows 运行环境**（解释器、激活、复现）、版本控制配套 | 任何新机器/新协作者工作前必读 |
 | `docs/操作指南.md` | **完整操作文档**（安装/配置/全量 CLI/Web/定时推送/FAQ） | 日常使用、功能操作、故障排查时读 |
-| `docs/版本管理.md` | **Git 工作流 + 版本标注规则**（每轮对话结束提交） | 每轮对话收尾时必读 |
+| `docs/版本管理.md` | **Git 工作流 + 分支策略 + 版本标注规则**（每轮对话结束提交，新功能走 feature 分支） | 每轮对话收尾时必读 |
 | `docs/战法规范.md` | 战法编写规范 | 新增/修改战法时 |
 | `prompts/INDEX.md` | **Prompt 总索引**（id→文件→角色→依赖→状态） | 改任何 prompt 前必读 |
 | `prompts/glossary/术语表.md` | 超短术语统一语义 | 写 prompt / 判定术语时 |
@@ -189,12 +191,14 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 - `.gitignore` 已排除 `data/*/`、`output/*/`、`*.csv`、缓存目录——这些不入库
 
 ### 提交与版本（每轮对话结束时必须执行）
-用户要求：**每一轮对话结束后，AI 主动做一次 git 提交 + 标注版本 + 上传**。
+用户要求：**每一轮对话结束后，AI 主动做一次 git 提交 + 功能合并 + 标注版本 + 上传**（分支策略见 `docs/版本管理.md` 第 0/2 节）。
+0. 先确认当前分支：**新功能/较大改动在 `feature/<功能名>` 分支开发**（从 main 开分支）；**小修（bugfix/文档/环境同步/测试调整）直接提交 main**，不另开分支
 1. 提交前 `git status --short` 审查、`python -m pytest` 通过
-2. `git add -A` + `git commit -m "<type>(<scope>): <简述>"`（格式见 `docs/版本管理.md`）
-3. 按**工作量和改动大小**标注语义化版本并 `git tag`（PATCH=小改/文档，MINOR=新功能，MAJOR=架构级）
+2. `git add -A` + `git commit -m "<type>(<scope>): <简述>"`（格式见 `docs/版本管理.md`）——提交到当前分支；功能未完成的对话轮次停在 feature 分支，不合并不 bump
+3. 功能完成：`git merge --squash feature/<功能名>` 合并回 main；**版本 bump 只在合并时做**（新功能 MINOR / 小修 PATCH，MAJOR=架构级），bump 后打 `git tag`
 4. 同步 `pyproject.toml` 的 `version` 字段与 tag 一致
 5. 远程配置后 `git push origin main --tags`；未配置则告知用户待推
+6. 合并后删除 feature 分支：`git branch -d feature/<功能名>`
 
 ## Prompt ID 命名规范
 
