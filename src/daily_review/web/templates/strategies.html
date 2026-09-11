@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}战法管理 · 每日复盘{% endblock %}
+{% block content %}
+<h1>战法管理</h1>
+<div class="panel">
+  <div class="row" style="justify-content:space-between">
+    <p class="muted" style="flex:1;margin:0">
+      个人战法经页面保存后落盘 <code>data/strategies/</code>（gitignored，不入项目）；跑复盘时可选用于驱动「七、次日预案」。
+      模板示例（来源=示例）只读，仅作参考。正文建议含 8 节：概述 / 适用情绪阶段 / 选股 / 买入规则 / 卖出与止损 / 仓位管理 / 规避与风险 / 复盘记录。
+    </p>
+    <button class="btn" id="btnImport">导入 SKILL.md</button>
+    <button class="btn primary" id="btnNew">新增战法</button>
+  </div>
+  <div id="list" style="margin-top:12px"></div>
+</div>
+
+<div class="panel" id="skillImport" hidden>
+  <h2>导入 SKILL.md 为战法</h2>
+  <p class="muted">粘贴 ZCode skill 的 SKILL.md 内容（front-matter 需含 name；description 用于生成适用阶段）。
+    正文原样保留，若缺战法 8 节会在列表里提示，导入后可在下方编辑补全。</p>
+  <textarea id="skillBody" placeholder="---&#10;name: 深度价值-张坤型&#10;description: 以「深度价值」风格分析 A 股个股/板块。&#10;---&#10;&#10;## 风格画像&#10;..."></textarea>
+  <div class="row" style="margin-top:10px">
+    <button class="btn primary" id="btnImportDo">导入</button>
+    <button class="btn" id="btnImportCancel">取消</button>
+    <span class="muted" id="skillMsg"></span>
+  </div>
+</div>
+
+<div class="panel" id="editor" hidden>
+  <h2 id="edTitle">新增战法</h2>
+  <input type="hidden" id="edId">
+  <div class="row">
+    <div style="flex:2"><label>名称 *</label><input type="text" id="edName" placeholder="如：低吸战法"></div>
+    <div style="flex:1"><label>作者</label><input type="text" id="edAuthor"></div>
+    <div style="flex:1"><label>适用情绪阶段</label><input type="text" id="edApplies" placeholder="如：修复期 / 高潮期"></div>
+    <div style="flex:1"><label>状态</label>
+      <select id="edStatus"><option value="draft">draft（草稿）</option><option value="active">active（启用）</option></select>
+    </div>
+  </div>
+  <label>正文（Markdown，可带 YAML front-matter；front-matter 中的元信息优先）</label>
+  <textarea id="edBody" placeholder="## 1. 概述&#10;一句话：赚什么钱 + 核心逻辑&#10;&#10;## 2. 适用情绪阶段&#10;..."></textarea>
+  <div class="row" style="margin-top:10px">
+    <button class="btn primary" id="btnSave">保存</button>
+    <button class="btn" id="btnCancel">取消</button>
+    <span class="muted" id="edMsg"></span>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var listEl = document.getElementById('list');
+var editor = document.getElementById('editor');
+var editingId = '';
+
+function badge(s){
+  return s === 'active'
+    ? '<span class="badge active">active</span>'
+    : '<span class="badge">draft</span>';
+}
+function renderItems(items){
+  listEl.innerHTML = items.map(function(s){
+    var ms = (s.missing_sections && s.missing_sections.length)
+      ? '<div class="warn">缺节（不影响执行，建议补全）：' + esc(s.missing_sections.join('、')) + '</div>' : '';
+    var src = s.source === 'tracked'
+      ? '<span class="badge tracked">示例（只读）</span>' : '';
+    var ops = '';
+    ops += '<button class="btn" data-exp="' + esc(s.id) + '">导出 SKILL.md</button> ';
+    if(s.source === 'user'){
+      ops += '<button class="btn" data-tog="' + esc(s.id) + '" data-st="' + esc(s.status) + '">'
+          + (s.status === 'active' ? '停用' : '启用') + '</button> ';
+    }
+    ops += '<button class="btn" data-edit="' + esc(s.id) + '">编辑</button> ';
+    if(s.source === 'user'){
+      ops += '<button class="btn danger" data-del="' + esc(s.id) + '">删除</button>';
+    }
+    return '<div class="panel" style="margin-bottom:10px">'
+      + '<div class="row" style="justify-content:space-between">'
+      + '<div><strong>' + esc(s.name) + '</strong>' + badge(s.status) + src
+      + (s.author ? ' <span class="muted">' + esc(s.author) + '</span>' : '') + '</div>'
+      + '<div>' + ops + '</div>'
+      + '</div>'
+      + '<div class="muted">' + esc(s.applies_to || '未标注适用阶段') + ' · v' + esc(s.version) + '</div>'
+      + ms
+      + '</div>';
+  }).join('') || '<span class="muted">暂无战法，点击「新增战法」上传。</span>';
+}
+function load(){
+  api('/api/strategies').then(function(d){ renderItems(d.strategies); })
+    .catch(function(e){ alert(e.message); });
+}
+function openEditor(s, isNew){
+  editingId = isNew ? '' : s.id;
+  document.getElementById('edTitle').textContent = isNew ? '新增战法' : '编辑：' + s.name;
+  document.getElementById('edId').value = isNew ? '' : s.id;
+  document.getElementById('edName').value = isNew ? '' : (s.name || '');
+  document.getElementById('edAuthor').value = isNew ? '' : (s.author || '');
+  document.getElementById('edApplies').value = isNew ? '' : (s.applies_to || '');
+  document.getElementById('edStatus').value = isNew ? 'draft' : (s.status || 'draft');
+  document.getElementById('edBody').value = isNew ? '' : (s.body || '');
+  document.getElementById('edMsg').textContent = '';
+  editor.hidden = false;
+  document.getElementById('edName').focus();
+}
+function downloadText(text, filename){
+  var blob = new Blob([text], {type:'text/markdown;charset=utf-8'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+}
+function openImport(){
+  document.getElementById('skillBody').value = '';
+  document.getElementById('skillMsg').textContent = '';
+  document.getElementById('skillImport').hidden = false;
+  document.getElementById('skillBody').focus();
+}
+document.getElementById('btnNew').onclick = function(){ openEditor({}, true); };
+document.getElementById('btnCancel').onclick = function(){ editor.hidden = true; };
+document.getElementById('btnImport').onclick = openImport;
+document.getElementById('btnImportCancel').onclick = function(){ document.getElementById('skillImport').hidden = true; };
+document.getElementById('btnImportDo').onclick = function(){
+  var md = document.getElementById('skillBody').value;
+  if(!md.trim()){ alert('请先粘贴 SKILL.md 内容'); return; }
+  var msg = document.getElementById('skillMsg');
+  msg.textContent = '导入中…';
+  api('/api/strategies/import-skill', {method:'POST', body:JSON.stringify({markdown: md})})
+    .then(function(d){
+      msg.textContent = '已导入：' + d.name + '（缺节：' + (d.missing_sections.length ? d.missing_sections.join('、') : '无')
+        + '）。可在下方编辑补全正文。';
+      document.getElementById('skillImport').hidden = true;
+      load();
+    })
+    .catch(function(e){ msg.textContent = ''; alert(e.message); });
+};
+listEl.addEventListener('click', function(ev){
+  var t = ev.target;
+  if(t.dataset.exp){
+    api('/api/strategies/' + t.dataset.exp + '/export-skill')
+      .then(function(d){ downloadText(d.skill_markdown, d.strategy_id + '.skill.md'); })
+      .catch(function(e){ alert(e.message); });
+  }
+  if(t.dataset.edit){
+    api('/api/strategies/' + t.dataset.edit)
+      .then(function(s){ openEditor(s, false); })
+      .catch(function(e){ alert(e.message); });
+  }
+  if(t.dataset.tog){
+    api('/api/strategies/' + t.dataset.tog + '/status',
+        {method:'POST', body:JSON.stringify({status: t.dataset.st === 'active' ? 'draft' : 'active'})})
+      .then(load).catch(function(e){ alert(e.message); });
+  }
+  if(t.dataset.del){
+    if(!confirm('确认删除该战法？')) return;
+    api('/api/strategies/' + t.dataset.del, {method:'DELETE'})
+      .then(load).catch(function(e){ alert(e.message); });
+  }
+});
+document.getElementById('btnSave').onclick = function(){
+  var payload = {
+    markdown: document.getElementById('edBody').value,
+    name: document.getElementById('edName').value,
+    author: document.getElementById('edAuthor').value,
+    applies_to: document.getElementById('edApplies').value,
+    status: document.getElementById('edStatus').value
+  };
+  var url = editingId ? ('/api/strategies/' + editingId) : '/api/strategies';
+  var method = editingId ? 'PUT' : 'POST';
+  var msg = document.getElementById('edMsg');
+  msg.textContent = '保存中…';
+  api(url, {method: method, body: JSON.stringify(payload)})
+    .then(function(){
+      msg.textContent = '已保存';
+      editor.hidden = true;
+      load();
+    })
+    .catch(function(e){ msg.textContent = ''; alert(e.message); });
+};
+load();
+</script>
+{% endblock %}

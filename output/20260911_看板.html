@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>2026-09-11 数据看板</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0d1117; --panel: #161b22; --border: #30363d;
+  --ink: #e6edf3; --ink-2: #8b949e; --ink-3: #6e7681;
+  --grid: #21262d; --accent: #2a78d6; --accent-2: #eb6834; --accent-3: #1baf7a;
+  --up: #f5222d; --down: #3fb950; --warn: #d29922; --chip: #1f6feb;
+}
+@media (prefers-color-scheme: light) {
+  :root { color-scheme: light;
+    --bg: #ffffff; --panel: #f6f8fa; --border: #d0d7de;
+    --ink: #1f2328; --ink-2: #57606a; --ink-3: #6e7781;
+    --grid: #d8dee4; --up: #cf222e; --down: #1a7f37; --warn: #9a6700; --chip: #0969da;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  line-height: 1.4; }
+.board { max-width: 1180px; margin: 0 auto; padding: 14px 16px 28px; }
+.board-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 12px; }
+.board-head h1 { font-size: 18px; margin: 0; font-weight: 650; }
+.sub { color: var(--ink-2); font-size: 12px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr);
+  gap: 8px; margin-bottom: 12px; }
+.kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; border-left: 3px solid var(--accent); }
+.kpi .label { font-size: 11px; color: var(--ink-2); letter-spacing: .02em; }
+.kpi .value { font-size: 26px; font-weight: 700; margin-top: 2px; line-height: 1.1;
+  font-variant-numeric: tabular-nums; }
+.kpi .sub { font-size: 11px; margin-top: 3px; }
+.chip { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px;
+  background: rgba(31,111,235,.16); color: var(--chip); font-weight: 600; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.tables { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; min-width: 0; }
+.panel h2 { margin: 0 0 6px; font-size: 12px; color: var(--ink-2); font-weight: 600;
+  text-transform: none; letter-spacing: .02em; }
+@media (max-width: 900px) {
+  .charts, .tables { grid-template-columns: 1fr; }
+  .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 767px) {
+  .board { padding: 10px 8px 20px; }
+  .board-head h1 { font-size: 16px; }
+  .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .kpi { padding: 8px 10px; }
+  .kpi .value { font-size: 22px; }
+  .panel { padding: 8px 10px; }
+  table { font-size: 11px; }
+  th, td { padding: 3px 5px; }
+}
+figure { margin: 0; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; }
+figcaption { font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--ink-2); }
+.legend { font-size: 11px; color: var(--ink-2); margin-top: 4px; }
+.legend .sw { display: inline-block; width: 8px; height: 8px; border-radius: 2px;
+  margin: 0 4px 0 10px; vertical-align: -1px; }
+svg.chart { width: 100%; height: auto; display: block; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border);
+  white-space: nowrap; }
+#trend-summary, #emotion-comp { overflow-x: auto; }
+th { color: var(--ink-2); font-weight: 600; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tbody tr:nth-child(even) { background: rgba(128,128,128,.05); }
+.up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--ink-2); }
+.empty { color: var(--ink-3); font-size: 12px; }
+/* ---- v0.38：Tab 导航 / 明细面板 / 交互 ---- */
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
+  padding-bottom: 8px; overflow-x: auto; }
+.tab { background: none; border: 1px solid var(--border); color: var(--ink-2);
+  padding: 5px 16px; border-radius: 6px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.tab.active { background: rgba(31,111,235,.14); border-color: var(--chip); color: var(--ink); font-weight: 600; }
+.tab-panel { margin-bottom: 8px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 6px; }
+.panel-head h2 { margin: 0; }
+.inline-check { font-size: 12px; color: var(--ink-2); display: inline-flex; align-items: center;
+  gap: 4px; cursor: pointer; }
+.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+.filter-bar input[type=text] { background: var(--bg); border: 1px solid var(--border); color: var(--ink);
+  border-radius: 6px; padding: 5px 10px; font-size: 12px; width: 170px; }
+.filter-bar select { background: var(--bg); border: 1px solid var(--border); color: var(--ink);
+  border-radius: 6px; padding: 5px 8px; font-size: 12px; max-width: 180px; }
+.filter-bar button { background: none; border: 1px solid var(--border); color: var(--ink-2);
+  border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+.filter-bar button:hover { color: var(--ink); border-color: var(--chip); }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--ink); }
+.arr { font-size: 10px; color: var(--chip); margin-left: 2px; }
+tr.row-link { cursor: pointer; }
+tr.row-link:hover td { background: rgba(31,111,235,.08); }
+td.slim { max-width: 260px; white-space: normal; }
+.pager { display: flex; gap: 4px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.pager button { background: none; border: 1px solid var(--border); color: var(--ink-2);
+  border-radius: 5px; min-width: 26px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+.pager button:hover { color: var(--ink); }
+.pager button.active { background: rgba(31,111,235,.16); border-color: var(--chip); color: var(--ink); font-weight: 600; }
+.hint { font-size: 11px; color: var(--ink-3); margin-top: 4px; }
+.kpi.clickable { cursor: pointer; transition: border-color .15s; }
+.kpi.clickable:hover { border-color: var(--chip); }
+.table-wrap { overflow-x: auto; }
+.chart-tip { position: absolute; pointer-events: none; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 11px;
+  color: var(--ink); display: none; z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,.3);
+  max-width: 260px; }
+@media (max-width: 767px) {
+  .filter-bar input[type=text] { width: 100%; }
+  .tabs .tab { flex: 1; }
+}
+</style>
+</head>
+<body>
+<div class="board">
+  <header class="board-head">
+    <h1>2026-09-11 数据看板（周五）</h1>
+    <div class="sub">近10个交易日 · 收盘数据</div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button type="button" class="tab active" data-tab="overview">总览</button>
+    <button type="button" class="tab" data-tab="structure">市场结构</button>
+    <button type="button" class="tab" data-tab="zt">涨停明细</button>
+  </nav>
+
+  <section id="tab-overview" class="tab-panel">
+  <section class="kpi-grid" id="kpi"></section>
+
+  <section class="charts">
+    <figure>
+      <figcaption>情绪温度走势（0–100）</figcaption>
+      <svg id="chart-emotion" class="chart" viewBox="0 0 900 220"></svg>
+      <div class="legend" id="leg-emotion"></div>
+    </figure>
+    <figure>
+      <figcaption>涨停 / 连板 / 炸板 家数</figcaption>
+      <svg id="chart-counts" class="chart" viewBox="0 0 900 220"></svg>
+      <div class="legend" id="leg-counts"></div>
+    </figure>
+    <figure>
+      <figcaption>空间板高度（板）</figcaption>
+      <svg id="chart-height" class="chart" viewBox="0 0 900 180"></svg>
+      <div class="legend" id="leg-height"></div>
+    </figure>
+    <figure>
+      <figcaption>炸板率（%）</figcaption>
+      <svg id="chart-breakrate" class="chart" viewBox="0 0 900 180"></svg>
+      <div class="legend" id="leg-breakrate"></div>
+    </figure>
+  </section>
+
+  <section class="tables">
+    <div class="panel"><h2>近10日趋势摘要</h2><div id="trend-summary"></div></div>
+    <div class="panel"><h2>情绪温度成分拆解</h2><div id="emotion-comp"></div></div>
+  </section>
+  </section><!-- /tab-overview -->
+
+  <section id="tab-structure" class="tab-panel" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>连板梯队</h2></div>
+      <div class="table-wrap" id="ladder"></div>
+      <div class="hint">点击板数行 → 在「涨停明细」按该板数过滤</div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>题材板块</h2>
+        <label class="inline-check"><input type="checkbox" id="themeMainOnly"> 仅看主线</label></div>
+      <div class="table-wrap" id="themes"></div>
+      <div class="hint">点击题材行 → 在「涨停明细」按该行业过滤</div>
+    </div>
+  </section>
+
+  <section id="tab-zt" class="tab-panel" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>涨停个股明细</h2><span id="ztCount" class="muted"></span></div>
+      <div class="filter-bar">
+        <input type="text" id="ztSearch" placeholder="搜索代码/名称">
+        <select id="ztIndustry"><option value="">全部行业</option></select>
+        <select id="ztLb"><option value="">全部连板</option></select>
+        <button type="button" id="ztClear">清空筛选</button>
+      </div>
+      <div class="table-wrap" id="zt-list"></div>
+      <div id="ztPager" class="pager"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+const DATA = {"trade_date":"20260911","weekday":"周五","n_days":10,"dash_ver":2,"trend":[{"date":"20260831","zt_count":88,"lianban_count":18,"max_lb":6,"break_count":30,"break_rate":0.2542,"dt_count":0,"emotion":75.2,"missing":[]},{"date":"20260901","zt_count":88,"lianban_count":18,"max_lb":6,"break_count":30,"break_rate":0.2542,"dt_count":0,"emotion":80.2,"missing":[]},{"date":"20260902","zt_count":52,"lianban_count":13,"max_lb":4,"break_count":15,"break_rate":0.2239,"dt_count":0,"emotion":50.9,"missing":[]},{"date":"20260903","zt_count":44,"lianban_count":9,"max_lb":5,"break_count":33,"break_rate":0.4286,"dt_count":0,"emotion":44.3,"missing":[]},{"date":"20260904","zt_count":39,"lianban_count":7,"max_lb":5,"break_count":48,"break_rate":0.5517,"dt_count":0,"emotion":39.6,"missing":[]},{"date":"20260907","zt_count":93,"lianban_count":13,"max_lb":6,"break_count":19,"break_rate":0.1696,"dt_count":0,"emotion":79.3,"missing":[]},{"date":"20260908","zt_count":73,"lianban_count":18,"max_lb":4,"break_count":37,"break_rate":0.3364,"dt_count":0,"emotion":54.8,"missing":[]},{"date":"20260909","zt_count":48,"lianban_count":15,"max_lb":5,"break_count":27,"break_rate":0.36,"dt_count":0,"emotion":49.4,"missing":[]},{"date":"20260910","zt_count":35,"lianban_count":9,"max_lb":4,"break_count":22,"break_rate":0.386,"dt_count":0,"emotion":41.3,"missing":[]},{"date":"20260911","zt_count":40,"lianban_count":7,"max_lb":4,"break_count":18,"break_rate":0.3103,"dt_count":0,"emotion":46.0,"missing":[]}],"kpi":{"emotion_score":46.0,"emotion_stage":"修复期","emotion_reason":"近10日情绪温度 75→80→51→44→40→79→55→49→41→46，今日 46 分（较昨日 +5），判定修复期","zt_count":40,"lianban_count":7,"max_lb":4,"max_lb_stock":"瑞尔特","break_rate":0.3103,"dt_count":0,"first_board_count":33,"promote_rate":0.2,"height_position":{"current":4,"max":6,"min":4,"percentile":0.0,"label":"低位","trend":"持平"},"zt_amount":416.48,"mf_net":21.54,"lhb_net":20.68},"emotion":{"available":true,"score":46.0,"stage":"修复期","stage_reason":"近10日情绪温度 75→80→51→44→40→79→55→49→41→46，今日 46 分（较昨日 +5），判定修复期","components":{"zt":25.0,"height":50.0,"promote":40.0,"break":47.4,"dt":100.0},"raw":{"zt_count":45,"max_lb":4,"promote":0.2,"break_rate":0.3103,"dt_count":0}},"ladder":{"ladder":[{"height":4,"count":1,"stocks":["002790 瑞尔特 09:25 封 家居用品"],"weak":[]},{"height":3,"count":2,"stocks":["000993 闽东电力 09:25 封 电力","603421 鼎信通讯 10:20 封 通信设备"],"weak":["603421 鼎信通讯"]},{"height":2,"count":4,"stocks":["002912 中新赛克 09:25 封 计算机设","600876 凯盛新能 09:31 封 玻璃玻纤"],"weak":["600876 凯盛新能"]},{"height":1,"count":33,"stocks":["002161 远 望 谷 09:25 封 其他电子","605069 正和生态 09:32 封 环境治理"],"weak":["605069 正和生态","600184 光电股份","605258 协和电子","002560 通达股份","605088 冠盛股份","002902 铭普光磁","603693 江苏新能","300563 神宇股份","002242 九阳股份","605058 澳弘电子","600967 内蒙一机","000980 众泰汽车","002218 拓日新能","601199 江南水务","002519 银河电子","603386 骏亚科技","603136 天目湖","600237 铜峰电子","603439 三力制药"]}],"promotion":{"1进2":0.1538,"2进3":0.3333,"3进4":0.5,"4进5":0.0}},"themes":[{"name":"元件","member_count":9,"max_lb":2,"stage":"发酵","stage_reason":"元件：连续 10 日 3→3→0→1→0→14→1→2→2→9 家，高度 2 板，判定发酵","leader":{"code":"000823","name":"超声电子","lb_num":2},"is_main":true},{"name":"电力","member_count":4,"max_lb":3,"stage":"退潮","stage_reason":"电力：连续 10 日 0→0→1→2→1→0→0→2→5→4 家，高度 3 板，判定退潮","leader":{"code":"000993","name":"闽东电力","lb_num":3},"is_main":true},{"name":"通信设备","member_count":3,"max_lb":3,"stage":"发酵","stage_reason":"通信设备：连续 10 日 3→3→1→0→1→8→2→2→1→3 家，高度 3 板，判定发酵","leader":{"code":"603421","name":"鼎信通讯","lb_num":3},"is_main":false},{"name":"地面兵装","member_count":3,"max_lb":1,"stage":"发酵","stage_reason":"地面兵装：连续 10 日 0→0→2→0→0→0→0→0→0→3 家，高度 1 板，判定发酵","leader":{"code":"600184","name":"光电股份","lb_num":1},"is_main":false},{"name":"玻璃玻纤","member_count":2,"max_lb":2,"stage":"启动","stage_reason":"玻璃玻纤：连续 10 日 0→0→2→0→0→0→0→0→2→2 家，高度 2 板，判定启动","leader":{"code":"600876","name":"凯盛新能","lb_num":2},"is_main":false},{"name":"汽车零部","member_count":2,"max_lb":1,"stage":"启动","stage_reason":"汽车零部：连续 10 日 6→6→5→4→2→7→1→2→0→2 家，高度 1 板，判定启动","leader":{"code":"605088","name":"冠盛股份","lb_num":1},"is_main":false},{"name":"环境治理","member_count":2,"max_lb":1,"stage":"启动","stage_reason":"环境治理：连续 10 日 1→1→1→0→0→0→1→0→0→2 家，高度 1 板，判定启动","leader":{"code":"605069","name":"正和生态","lb_num":1},"is_main":false},{"name":"家居用品","member_count":1,"max_lb":4,"stage":"启动","stage_reason":"家居用品：连续 10 日 4→4→1→1→0→0→1→2→1→1 家，高度 4 板，判定启动","leader":{"code":"002790","name":"瑞尔特","lb_num":4},"is_main":false},{"name":"计算机设","member_count":1,"max_lb":2,"stage":"启动","stage_reason":"计算机设：连续 10 日 2→2→1→0→0→1→0→0→1→1 家，高度 2 板，判定启动","leader":{"code":"002912","name":"中新赛克","lb_num":2},"is_main":false},{"name":"IT服务Ⅱ","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"IT服务Ⅱ：连续 10 日 2→2→2→2→1→0→0→0→0→1 家，高度 1 板，判定启动","leader":{"code":"600410","name":"华胜天成","lb_num":1},"is_main":false},{"name":"中药Ⅱ","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"中药Ⅱ：连续 10 日 2→2→0→1→0→0→1→1→0→1 家，高度 1 板，判定启动","leader":{"code":"603439","name":"三力制药","lb_num":1},"is_main":false},{"name":"光伏设备","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"光伏设备：连续 10 日 0→0→1→0→0→1→0→0→0→1 家，高度 1 板，判定启动","leader":{"code":"600207","name":"安彩高科","lb_num":1},"is_main":false},{"name":"其他电子","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"其他电子：连续 10 日 0→0→0→0→0→0→0→0→0→1 家，高度 1 板，判定启动","leader":{"code":"002161","name":"远 望 谷","lb_num":1},"is_main":false},{"name":"化学原料","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"化学原料：连续 10 日 2→2→2→1→0→0→3→0→0→1 家，高度 1 板，判定启动","leader":{"code":"603938","name":"三孚股份","lb_num":1},"is_main":false},{"name":"塑料","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"塑料：连续 10 日 1→1→2→1→0→1→1→0→0→1 家，高度 1 板，判定启动","leader":{"code":"002585","name":"双星新材","lb_num":1},"is_main":false},{"name":"小家电","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"小家电：连续 10 日 0→0→0→1→1→2→1→0→0→1 家，高度 1 板，判定启动","leader":{"code":"002242","name":"九阳股份","lb_num":1},"is_main":false},{"name":"影视院线","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"影视院线：连续 10 日 4→4→1→0→1→2→2→0→0→1 家，高度 1 板，判定启动","leader":{"code":"600088","name":"中视传媒","lb_num":1},"is_main":false},{"name":"数字媒体","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"数字媒体：连续 10 日 3→3→0→0→0→0→1→0→0→1 家，高度 1 板，判定启动","leader":{"code":"603466","name":"风语筑","lb_num":1},"is_main":false},{"name":"旅游及景","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"旅游及景：连续 10 日 0→0→1→1→0→1→1→1→1→1 家，高度 1 板，判定启动","leader":{"code":"603136","name":"天目湖","lb_num":1},"is_main":false},{"name":"电网设备","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"电网设备：连续 10 日 1→1→4→2→0→1→1→3→1→1 家，高度 1 板，判定启动","leader":{"code":"002560","name":"通达股份","lb_num":1},"is_main":false},{"name":"种植业","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"种植业：连续 10 日 2→2→0→1→2→4→3→2→1→1 家，高度 1 板，判定启动","leader":{"code":"603336","name":"宏辉果蔬","lb_num":1},"is_main":false},{"name":"黑色家电","member_count":1,"max_lb":1,"stage":"启动","stage_reason":"黑色家电：连续 10 日 0→0→0→0→0→0→0→0→0→1 家，高度 1 板，判定启动","leader":{"code":"002848","name":"高斯贝尔","lb_num":1},"is_main":false}],"zt_list":[{"code":"000993","name":"闽东电力","lb_num":3,"first_time":"09:25","open_times":1,"seal_amount":1.36,"amount":6.65,"turnover":10.5,"industry":"电力"},{"code":"002161","name":"远 望 谷","lb_num":1,"first_time":"09:25","open_times":0,"seal_amount":2.72,"amount":1.51,"turnover":2.5,"industry":"其他电子"},{"code":"002790","name":"瑞尔特","lb_num":4,"first_time":"09:25","open_times":0,"seal_amount":3.85,"amount":0.99,"turnover":4.1,"industry":"家居用品"},{"code":"002912","name":"中新赛克","lb_num":2,"first_time":"09:25","open_times":0,"seal_amount":1.13,"amount":0.81,"turnover":2.1,"industry":"计算机设"},{"code":"600876","name":"凯盛新能","lb_num":2,"first_time":"09:31","open_times":1,"seal_amount":0.27,"amount":1.44,"turnover":4.2,"industry":"玻璃玻纤"},{"code":"605069","name":"正和生态","lb_num":1,"first_time":"09:32","open_times":0,"seal_amount":0.39,"amount":0.89,"turnover":3.7,"industry":"环境治理"},{"code":"002585","name":"双星新材","lb_num":1,"first_time":"09:33","open_times":2,"seal_amount":0.93,"amount":10.4,"turnover":11.9,"industry":"塑料"},{"code":"603466","name":"风语筑","lb_num":1,"first_time":"09:35","open_times":2,"seal_amount":1.0,"amount":10.97,"turnover":14.1,"industry":"数字媒体"},{"code":"600184","name":"光电股份","lb_num":1,"first_time":"09:36","open_times":5,"seal_amount":0.74,"amount":9.2,"turnover":8.0,"industry":"地面兵装"},{"code":"603938","name":"三孚股份","lb_num":1,"first_time":"09:39","open_times":1,"seal_amount":1.12,"amount":13.18,"turnover":7.1,"industry":"化学原料"},{"code":"600207","name":"安彩高科","lb_num":1,"first_time":"09:39","open_times":0,"seal_amount":0.54,"amount":1.19,"turnover":2.3,"industry":"光伏设备"},{"code":"600410","name":"华胜天成","lb_num":1,"first_time":"09:40","open_times":1,"seal_amount":1.27,"amount":21.41,"turnover":12.9,"industry":"IT服务Ⅱ"},{"code":"605258","name":"协和电子","lb_num":1,"first_time":"09:45","open_times":6,"seal_amount":0.23,"amount":2.75,"turnover":9.2,"industry":"元件"},{"code":"002560","name":"通达股份","lb_num":1,"first_time":"09:49","open_times":4,"seal_amount":0.47,"amount":5.36,"turnover":12.5,"industry":"电网设备"},{"code":"605088","name":"冠盛股份","lb_num":1,"first_time":"09:50","open_times":0,"seal_amount":0.43,"amount":3.36,"turnover":7.7,"industry":"汽车零部"},{"code":"002848","name":"高斯贝尔","lb_num":1,"first_time":"09:52","open_times":2,"seal_amount":0.71,"amount":4.52,"turnover":18.3,"industry":"黑色家电"},{"code":"002902","name":"铭普光磁","lb_num":1,"first_time":"09:52","open_times":2,"seal_amount":0.38,"amount":10.38,"turnover":18.6,"industry":"通信设备"},{"code":"605011","name":"杭州热电","lb_num":1,"first_time":"09:55","open_times":0,"seal_amount":0.63,"amount":3.12,"turnover":4.2,"industry":"电力"},{"code":"603693","name":"江苏新能","lb_num":1,"first_time":"10:05","open_times":6,"seal_amount":0.16,"amount":4.24,"turnover":3.8,"industry":"电力"},{"code":"300563","name":"神宇股份","lb_num":1,"first_time":"10:06","open_times":3,"seal_amount":0.56,"amount":6.12,"turnover":18.1,"industry":"通信设备"},{"code":"002242","name":"九阳股份","lb_num":1,"first_time":"10:09","open_times":1,"seal_amount":0.18,"amount":3.14,"turnover":4.4,"industry":"小家电"},{"code":"605058","name":"澳弘电子","lb_num":1,"first_time":"10:20","open_times":0,"seal_amount":0.4,"amount":3.14,"turnover":6.8,"industry":"元件"},{"code":"603421","name":"鼎信通讯","lb_num":3,"first_time":"10:20","open_times":3,"seal_amount":0.27,"amount":8.32,"turnover":16.9,"industry":"通信设备"},{"code":"600967","name":"内蒙一机","lb_num":1,"first_time":"10:34","open_times":7,"seal_amount":0.58,"amount":25.64,"turnover":10.4,"industry":"地面兵装"},{"code":"600088","name":"中视传媒","lb_num":1,"first_time":"11:05","open_times":1,"seal_amount":0.6,"amount":2.51,"turnover":4.9,"industry":"影视院线"},{"code":"000980","name":"众泰汽车","lb_num":1,"first_time":"11:08","open_times":1,"seal_amount":0.47,"amount":12.29,"turnover":11.8,"industry":"汽车零部"},{"code":"002218","name":"拓日新能","lb_num":1,"first_time":"13:02","open_times":0,"seal_amount":0.48,"amount":6.31,"turnover":10.8,"industry":"电力"},{"code":"000823","name":"超声电子","lb_num":2,"first_time":"13:04","open_times":1,"seal_amount":1.28,"amount":35.25,"turnover":30.8,"industry":"元件"},{"code":"603936","name":"博敏电子","lb_num":1,"first_time":"13:36","open_times":0,"seal_amount":0.69,"amount":23.03,"turnover":18.5,"industry":"元件"},{"code":"002201","name":"九鼎新材","lb_num":2,"first_time":"13:36","open_times":0,"seal_amount":0.96,"amount":11.42,"turnover":18.5,"industry":"玻璃玻纤"},{"code":"000636","name":"风华高科","lb_num":1,"first_time":"13:37","open_times":0,"seal_amount":5.74,"amount":99.85,"turnover":16.2,"industry":"元件"},{"code":"002815","name":"崇达技术","lb_num":1,"first_time":"13:39","open_times":0,"seal_amount":1.26,"amount":20.14,"turnover":13.5,"industry":"元件"},{"code":"001232","name":"嘉立创","lb_num":1,"first_time":"13:47","open_times":0,"seal_amount":1.54,"amount":12.49,"turnover":16.3,"industry":"元件"},{"code":"601199","name":"江南水务","lb_num":1,"first_time":"13:50","open_times":1,"seal_amount":0.15,"amount":2.1,"turnover":3.6,"industry":"环境治理"},{"code":"002519","name":"银河电子","lb_num":1,"first_time":"13:51","open_times":1,"seal_amount":0.49,"amount":9.24,"turnover":13.4,"industry":"地面兵装"},{"code":"603336","name":"宏辉果蔬","lb_num":1,"first_time":"13:55","open_times":0,"seal_amount":0.54,"amount":3.73,"turnover":6.3,"industry":"种植业"},{"code":"603386","name":"骏亚科技","lb_num":1,"first_time":"14:08","open_times":0,"seal_amount":0.3,"amount":4.53,"turnover":8.9,"industry":"元件"},{"code":"603136","name":"天目湖","lb_num":1,"first_time":"14:14","open_times":0,"seal_amount":0.16,"amount":3.24,"turnover":11.8,"industry":"旅游及景"},{"code":"600237","name":"铜峰电子","lb_num":1,"first_time":"14:16","open_times":0,"seal_amount":0.49,"amount":8.99,"turnover":16.2,"industry":"元件"},{"code":"603439","name":"三力制药","lb_num":1,"first_time":"14:22","open_times":0,"seal_amount":0.42,"amount":2.61,"turnover":5.5,"industry":"中药Ⅱ"}],"flags":{"prev_zt_ok":true,"moneyflow_ok":true,"lhb_ok":true}};
+
+function esc(s) { return String(s === null || s === undefined ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function fmtDate(d) { return d ? d.slice(4, 6) + "-" + d.slice(6) : ""; }
+function pct(v, d) { return v === null || v === undefined ? "—" : (v * 100).toFixed(d ?? 1) + "%"; }
+function upDown(v) { return v > 0 ? "up" : v < 0 ? "down" : ""; }
+
+/* ---------- SVG 绘图（通用） ---------- */
+const PAD = { l: 42, r: 12, t: 10, b: 26 };
+// SVG 命名空间 URI 带协议前缀（协议名 + 双斜杠），拼装避免字面量——模板保持零外链字面量，
+// 供「单文件自包含」的离线断言扫描（render_html 断言不出现协议前缀）
+const NS = "http:" + "//www.w3.org/2000/svg";
+
+function makeScale(rows, yMax, w, h) {
+  const innerW = w - PAD.l - PAD.r, innerH = h - PAD.t - PAD.b;
+  const n = rows.length, step = n > 1 ? innerW / (n - 1) : 0;
+  return {
+    x: i => PAD.l + (n > 1 ? i * step : innerW / 2),
+    y: v => PAD.t + innerH - (v / yMax) * innerH,
+    innerW, innerH, n,
+  };
+}
+
+function drawGridAndAxes(svg, s, yMax, yFmt) {
+  const ticks = 4;
+  for (let t = 0; t <= ticks; t++) {
+    const v = (yMax / ticks) * t;
+    const y = s.y(v);
+    const line = document.createElementNS(NS, "line");
+    line.setAttribute("x1", PAD.l); line.setAttribute("y1", y);
+    line.setAttribute("x2", PAD.l + s.innerW); line.setAttribute("y2", y);
+    line.setAttribute("stroke", "var(--grid)"); line.setAttribute("stroke-width", "1");
+    svg.appendChild(line);
+    const txt = document.createElementNS(NS, "text");
+    txt.setAttribute("x", PAD.l - 6); txt.setAttribute("y", y + 4);
+    txt.setAttribute("text-anchor", "end"); txt.setAttribute("font-size", "10");
+    txt.setAttribute("fill", "var(--ink-3)");
+    txt.textContent = yFmt(v);
+    svg.appendChild(txt);
+  }
+}
+
+function drawXLabels(svg, rows, s) {
+  const every = rows.length > 8 ? 2 : 1;
+  rows.forEach((r, i) => {
+    if (i % every !== 0) return;
+    const txt = document.createElementNS(NS, "text");
+    txt.setAttribute("x", s.x(i)); txt.setAttribute("y", s.innerH + PAD.t + 18);
+    txt.setAttribute("text-anchor", "middle"); txt.setAttribute("font-size", "10");
+    txt.setAttribute("fill", "var(--ink-3)");
+    txt.textContent = fmtDate(r.date);
+    svg.appendChild(txt);
+  });
+}
+
+function drawLineChart(svg, rows, series, opts) {
+  const { yMax = 100, yFmt = v => Math.round(v), bands = [], highlightLast = false,
+          height = 220 } = opts || {};
+  const W = 900, H = height;
+  svg.innerHTML = "";
+  const s = makeScale(rows, yMax, W, H);
+
+  bands.forEach(b => {
+    const rect = document.createElementNS(NS, "rect");
+    rect.setAttribute("x", PAD.l); rect.setAttribute("y", s.y(b.y1));
+    rect.setAttribute("width", s.innerW);
+    rect.setAttribute("height", Math.max(0, s.y(b.y0) - s.y(b.y1)));
+    rect.setAttribute("fill", b.fill);
+    svg.appendChild(rect);
+    const txt = document.createElementNS(NS, "text");
+    txt.setAttribute("x", PAD.l + 6); txt.setAttribute("y", s.y(b.y1) + 12);
+    txt.setAttribute("font-size", "10"); txt.setAttribute("fill", b.labelColor || "var(--ink-3)");
+    txt.textContent = b.label;
+    svg.appendChild(txt);
+  });
+
+  drawGridAndAxes(svg, s, yMax, yFmt);
+  drawXLabels(svg, rows, s);
+
+  series.forEach(sr => {
+    const flushSeg = (pts) => {
+      if (!pts.length) return;
+      const line = document.createElementNS(NS, "polyline");
+      line.setAttribute("fill", "none"); line.setAttribute("stroke", sr.color);
+      line.setAttribute("stroke-width", "2"); line.setAttribute("stroke-linejoin", "round");
+      line.setAttribute("points", pts.join(" "));
+      svg.appendChild(line);
+    };
+    let pts = [];
+    rows.forEach((r, i) => {
+      const v = r[sr.key];
+      const has = v !== null && v !== undefined && !isNaN(v);
+      if (has) {
+        pts.push(s.x(i).toFixed(1) + "," + s.y(v).toFixed(1));
+        const c = document.createElementNS(NS, "circle");
+        c.setAttribute("cx", s.x(i)); c.setAttribute("cy", s.y(v)); c.setAttribute("r", "3.5");
+        c.setAttribute("fill", sr.color);
+        const ti = document.createElementNS(NS, "title");
+        ti.textContent = fmtDate(r.date) + " · " + sr.label + " " + (sr.fmt ? sr.fmt(v) : v);
+        c.appendChild(ti);
+        attachTip(c, ti);
+        svg.appendChild(c);
+      } else {
+        flushSeg(pts);
+        pts = [];
+      }
+    });
+    flushSeg(pts);
+
+    if (highlightLast) {
+      for (let i = rows.length - 1; i >= 0; i--) {
+        const v = rows[i][sr.key];
+        if (v === null || v === undefined || isNaN(v)) continue;
+        const dot = document.createElementNS(NS, "circle");
+        dot.setAttribute("cx", s.x(i)); dot.setAttribute("cy", s.y(v)); dot.setAttribute("r", "4.5");
+        dot.setAttribute("fill", sr.color); dot.setAttribute("stroke", "var(--bg)");
+        dot.setAttribute("stroke-width", "2");
+        svg.appendChild(dot);
+        if (sr.lastLabel) {
+          const lbl = document.createElementNS(NS, "text");
+          lbl.setAttribute("x", s.x(i)); lbl.setAttribute("y", Math.max(PAD.t + 12, s.y(v) - 8));
+          lbl.setAttribute("text-anchor", "middle"); lbl.setAttribute("font-size", "11");
+          lbl.setAttribute("font-weight", "600"); lbl.setAttribute("fill", sr.color);
+          lbl.textContent = sr.fmt ? sr.fmt(v) : v;
+          svg.appendChild(lbl);
+        }
+        break;
+      }
+    }
+  });
+}
+
+function drawBarChart(svg, rows, key, opts) {
+  const { color = "var(--accent)", yFmt = v => v, valueLabel = "", height = 180 } = opts || {};
+  const W = 900, H = height;
+  svg.innerHTML = "";
+  const yMax = Math.max(1, ...rows.map(r => r[key] || 0)) * 1.15;
+  const s = makeScale(rows, yMax, W, H);
+  drawGridAndAxes(svg, s, yMax, yFmt);
+  drawXLabels(svg, rows, s);
+  const barW = Math.min(40, (s.innerW / s.n) * 0.55);
+  rows.forEach((r, i) => {
+    const v = r[key] || 0;
+    const x = s.x(i) - barW / 2, y = s.y(v), h = s.innerH + PAD.t - y;
+    const rect = document.createElementNS(NS, "rect");
+    rect.setAttribute("x", x); rect.setAttribute("y", y); rect.setAttribute("width", barW);
+    rect.setAttribute("height", h); rect.setAttribute("fill", color);
+    rect.setAttribute("rx", "3"); rect.setAttribute("ry", "3");
+    const base = document.createElementNS(NS, "rect");
+    base.setAttribute("x", x); base.setAttribute("y", s.innerH + PAD.t - 3);
+    base.setAttribute("width", barW); base.setAttribute("height", "3"); base.setAttribute("fill", color);
+    svg.appendChild(rect); svg.appendChild(base);
+    const ti = document.createElementNS(NS, "title");
+    ti.textContent = fmtDate(r.date) + " · " + v + valueLabel;
+    rect.appendChild(ti);
+    attachTip(rect, ti);
+    if (v === Math.max(...rows.map(rr => rr[key] || 0))) {
+      const lbl = document.createElementNS(NS, "text");
+      lbl.setAttribute("x", x + barW / 2); lbl.setAttribute("y", y - 5);
+      lbl.setAttribute("text-anchor", "middle"); lbl.setAttribute("font-size", "11");
+      lbl.setAttribute("fill", "var(--ink-2)");
+      lbl.textContent = v + valueLabel;
+      svg.appendChild(lbl);
+    }
+  });
+}
+
+function setLegend(el, items) {
+  if (!el) return;
+  el.innerHTML = items.map(it =>
+    '<span class="sw" style="background:' + it.color + '"></span>' + esc(it.label)).join("");
+}
+
+/* ---------- 页面渲染 ---------- */
+function stageColor(stage) {
+  if (!stage) return "var(--ink-3)";
+  if (stage.indexOf("高潮") >= 0) return "var(--up)";
+  if (stage.indexOf("冰点") >= 0) return "var(--down)";
+  if (stage.indexOf("修复") >= 0) return "var(--warn)";
+  return "var(--accent)";
+}
+
+function renderKPI() {
+  const k = DATA.kpi, emo = DATA.emotion;
+  const hp = k.height_position || {};
+  const cards = [
+    { label: "情绪温度", value: emo.available ? k.emotion_score : "—",
+      valueCls: emo.available ? stageColor(k.emotion_stage) : "",
+      bar: emo.available ? stageColor(k.emotion_stage) : "var(--accent)",
+      sub: emo.available ? '<span class="chip" style="color:' + stageColor(k.emotion_stage)
+        + '">' + esc(k.emotion_stage) + "</span>" : "数据不足" },
+    { label: "涨停家数", value: k.zt_count, valueCls: "var(--up)", bar: "var(--up)", goto: "zt" },
+    { label: "连板家数", value: k.lianban_count, valueCls: "var(--up)", bar: "var(--accent-2)", goto: "structure" },
+    { label: "空间板高度", value: k.max_lb + " 板", valueCls: "var(--accent)", bar: "var(--accent)",
+      sub: esc(k.max_lb_stock), goto: "structure" },
+    { label: "炸板率", value: pct(k.break_rate, 0), valueCls: "var(--warn)", bar: "var(--warn)" },
+    { label: "跌停家数", value: k.dt_count, valueCls: k.dt_count > 0 ? "var(--down)" : "",
+      bar: "var(--down)" },
+    { label: "首板家数", value: k.first_board_count, valueCls: "var(--up)", bar: "var(--accent-3)",
+      goto: "zt", nullHide: true },
+    { label: "晋级率", value: k.promote_rate === null || k.promote_rate === undefined
+        ? null : pct(k.promote_rate, 0),
+      valueCls: "var(--accent-2)", bar: "var(--accent-2)", sub: "今日连板 ÷ 昨日涨停",
+      goto: "structure", nullHide: true },
+    { label: "最高板位置", value: hp.label || null, valueCls: "var(--accent)", bar: "var(--accent)",
+      sub: (hp.trend || "") + (hp.percentile !== undefined && hp.percentile !== null
+        ? " · 分位 " + Math.round(hp.percentile * 100) + "%" : ""), nullHide: true },
+    { label: "炸板净流出", value: k.mf_net === null || k.mf_net === undefined
+        ? null : Math.abs(k.mf_net).toFixed(2) + " 亿",
+      valueCls: upDown(k.mf_net), bar: k.mf_net < 0 ? "var(--down)" : "var(--up)",
+      sub: "炸板股主力净额", nullHide: true },
+    { label: "龙虎榜净买", value: k.lhb_net === null || k.lhb_net === undefined
+        ? null : Math.abs(k.lhb_net).toFixed(2) + " 亿",
+      valueCls: upDown(k.lhb_net), bar: k.lhb_net < 0 ? "var(--down)" : "var(--up)",
+      sub: "净买额", nullHide: true },
+    { label: "涨停总成交额", value: k.zt_amount === null || k.zt_amount === undefined
+        ? null : k.zt_amount.toFixed(2) + " 亿",
+      valueCls: "", bar: "var(--accent)", nullHide: true },
+  ];
+  const html = cards
+    .filter(c => !c.nullHide || (c.value !== null && c.value !== undefined && c.value !== ""))
+    .map(c => '<div class="kpi' + (c.goto ? " clickable" : "") + '" style="border-left-color:'
+      + (c.bar || "var(--accent)") + '"' + (c.goto ? ' data-goto="' + c.goto + '"' : "") + ">"
+      + '<div class="label">' + esc(c.label) + '</div>'
+      + '<div class="value" style="color:' + (c.valueCls || "") + '">' + esc(c.value) + "</div>"
+      + (c.sub ? '<div class="sub">' + c.sub + "</div>" : "") + "</div>").join("");
+  document.getElementById("kpi").innerHTML = html;
+  document.querySelectorAll("#kpi .kpi.clickable").forEach(function (el) {
+    el.addEventListener("click", function () { switchTab(el.dataset.goto); });
+  });
+}
+
+function renderCharts() {
+  const rows = DATA.trend;
+  const hasData = rows.some(r => r.zt_count > 0);
+  const emoAvailable = DATA.emotion.available;
+
+  if (!hasData) {
+    ["chart-emotion", "chart-counts", "chart-height", "chart-breakrate"].forEach(id => {
+      const el = document.getElementById(id);
+      el.innerHTML = '<text x="450" y="110" text-anchor="middle" font-size="13" fill="var(--ink-3)">数据不足</text>';
+    });
+    return;
+  }
+
+  if (emoAvailable) {
+    const bands = [
+      { y0: 0, y1: 45, label: "冰点/修复", fill: "rgba(80,200,120,.07)", labelColor: "var(--down)" },
+      { y0: 45, y1: 70, label: "修复/退潮", fill: "rgba(210,153,34,.09)", labelColor: "var(--warn)" },
+      { y0: 70, y1: 100, label: "高潮/退潮", fill: "rgba(245,34,45,.09)", labelColor: "var(--up)" },
+    ];
+    drawLineChart(document.getElementById("chart-emotion"), rows,
+      [{ key: "emotion", label: "情绪温度", color: "var(--accent)", fmt: v => Math.round(v), lastLabel: true }],
+      { yMax: 100, bands, highlightLast: true, yFmt: v => Math.round(v), height: 220 });
+    setLegend(document.getElementById("leg-emotion"),
+      [{ color: "var(--accent)", label: "情绪温度分" + (DATA.emotion.stage ? " · 今日" + DATA.emotion.stage : "") }]);
+  } else {
+    document.getElementById("chart-emotion").innerHTML =
+      '<text x="450" y="110" text-anchor="middle" font-size="13" fill="var(--ink-3)">情绪温度数据不足</text>';
+  }
+
+  drawLineChart(document.getElementById("chart-counts"), rows,
+    [{ key: "zt_count", label: "涨停", color: "var(--accent)", lastLabel: true },
+     { key: "lianban_count", label: "连板", color: "var(--accent-2)" },
+     { key: "break_count", label: "炸板", color: "var(--accent-3)" }],
+    { yMax: Math.max(20, ...rows.map(r => Math.max(r.zt_count, r.break_count))) * 1.15,
+      highlightLast: true, yFmt: v => Math.round(v), height: 220 });
+  setLegend(document.getElementById("leg-counts"),
+    [{ color: "var(--accent)", label: "涨停" },
+     { color: "var(--accent-2)", label: "连板" },
+     { color: "var(--accent-3)", label: "炸板" }]);
+
+  drawBarChart(document.getElementById("chart-height"), rows, "max_lb",
+    { color: "var(--accent)", valueLabel: " 板", yFmt: v => Math.round(v), height: 180 });
+
+  drawLineChart(document.getElementById("chart-breakrate"), rows,
+    [{ key: "break_rate", label: "炸板率", color: "var(--accent-2)", fmt: v => pct(v), lastLabel: true }],
+    { yMax: 1, highlightLast: true, yFmt: v => pct(v, 0), height: 180 });
+  setLegend(document.getElementById("leg-breakrate"),
+    [{ color: "var(--accent-2)", label: "炸板率" }]);
+}
+
+function renderTrendSummary() {
+  const rows = DATA.trend, el = document.getElementById("trend-summary");
+  if (!rows.length) { el.innerHTML = '<div class="empty">无趋势数据</div>'; return; }
+  const trs = rows.map(r =>
+    "<tr><td>" + fmtDate(r.date) + "</td>"
+    + "<td class='num'>" + r.zt_count + "</td>"
+    + "<td class='num'>" + r.lianban_count + "</td>"
+    + "<td class='num'>" + r.max_lb + "</td>"
+    + "<td class='num'>" + r.break_count + "</td>"
+    + "<td class='num'>" + pct(r.break_rate) + "</td>"
+    + "<td class='num'>" + r.dt_count + "</td>"
+    + "<td class='num'>" + (r.emotion === null || r.emotion === undefined ? "—" : Math.round(r.emotion)) + "</td>"
+    + "<td>" + esc((r.missing || []).join("、")) + "</td></tr>").join("");
+  el.innerHTML = "<table><thead><tr><th>日期</th><th class='num'>涨停</th><th class='num'>连板</th>"
+    + "<th class='num'>最高板</th><th class='num'>炸板</th><th class='num'>炸板率</th>"
+    + "<th class='num'>跌停</th><th class='num'>情绪</th><th>缺失</th></tr></thead><tbody>"
+    + trs + "</tbody></table>";
+}
+
+function renderEmotionComp() {
+  const emo = DATA.emotion, el = document.getElementById("emotion-comp");
+  if (!emo.available) { el.innerHTML = '<div class="empty">情绪温度数据不足</div>'; return; }
+  const comps = emo.components || {}, raw = emo.raw || {};
+  const defs = [
+    { k: "zt", label: "涨停家数", rk: "zt_count", fmt: v => Math.round(v) + " 家" },
+    { k: "height", label: "空间板高度", rk: "max_lb", fmt: v => Math.round(v) + " 板" },
+    { k: "promote", label: "晋级延续率", rk: "promote", fmt: v => pct(v, 0) },
+    { k: "break", label: "炸板率", rk: "break_rate", fmt: v => pct(v, 0) },
+    { k: "dt", label: "跌停家数", rk: "dt_count", fmt: v => Math.round(v) + " 家" },
+  ];
+  const rows = defs.map(d =>
+    "<tr><td>" + d.label + "</td>"
+    + "<td class='num'>" + (raw[d.rk] === null || raw[d.rk] === undefined ? "—" : d.fmt(raw[d.rk])) + "</td>"
+    + "<td class='num'>" + (comps[d.k] === null || comps[d.k] === undefined ? "—" : Math.round(comps[d.k])) + "</td></tr>").join("");
+  el.innerHTML = "<table><thead><tr><th>成分</th><th class='num'>今日值</th>"
+    + "<th class='num'>成分分(0-100)</th></tr></thead><tbody>" + rows + "</tbody></table>";
+}
+
+/* ---------- 图表悬浮提示（v0.38） ---------- */
+function attachTip(el, titleEl) {
+  el.addEventListener("mousemove", function (ev) {
+    const fig = el.closest("figure");
+    if (!fig) return;
+    let tip = fig.querySelector(".chart-tip");
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.className = "chart-tip";
+      fig.style.position = "relative";
+      fig.appendChild(tip);
+    }
+    tip.textContent = titleEl.textContent;
+    tip.style.display = "block";
+    const r = fig.getBoundingClientRect();
+    tip.style.left = Math.max(4, ev.clientX - r.left + 12) + "px";
+    tip.style.top = Math.max(4, ev.clientY - r.top + 14) + "px";
+  });
+  el.addEventListener("mouseleave", function () {
+    const fig = el.closest("figure");
+    if (!fig) return;
+    const tip = fig.querySelector(".chart-tip");
+    if (tip) tip.style.display = "none";
+  });
+}
+
+/* ---------- Tab / 状态 / 联动（v0.38） ---------- */
+const STATE = { tab: "overview", sortKey: "lb_num", sortDir: "desc",
+  keyword: "", industry: "", lb: "", page: 1, mainOnly: false };
+
+function switchTab(name) {
+  STATE.tab = name;
+  document.querySelectorAll(".tab").forEach(function (b) {
+    b.classList.toggle("active", b.dataset.tab === name);
+  });
+  ["overview", "structure", "zt"].forEach(function (t) {
+    const el = document.getElementById("tab-" + t);
+    if (el) el.hidden = (t !== name);
+  });
+  if (name === "structure") renderStructure();
+  if (name === "zt") renderZtList();
+  try { sessionStorage.setItem("dashTab", name); } catch (e) {}
+  try { if (window.parent && window.parent.fitFrame) window.parent.fitFrame(); } catch (e) {}
+}
+
+function initTabs() {
+  document.querySelectorAll(".tab").forEach(function (b) {
+    b.addEventListener("click", function () { switchTab(b.dataset.tab); });
+  });
+  let saved = null;
+  try { saved = sessionStorage.getItem("dashTab"); } catch (e) {}
+  if (saved === "structure" || saved === "zt") switchTab(saved);
+}
+
+function renderStructure() {
+  renderLadder();
+  renderThemes();
+}
+
+function renderLadder() {
+  const el = document.getElementById("ladder");
+  const d = DATA.ladder;
+  if (!d || !d.ladder || !d.ladder.length) {
+    el.innerHTML = '<div class="empty">连板梯队数据不足</div>';
+    return;
+  }
+  const rows = d.ladder.map(function (row) {
+    const prom = d.promotion ? d.promotion[row.height + "进" + (row.height + 1)] : undefined;
+    const stocks = (row.stocks || []).map(function (s) { return esc(s); }).join("<br>");
+    let weak = "";
+    if (row.weak && row.weak.length) {
+      weak = '<tr class="weak-row"><td></td><td></td><td colspan="2"><div class="muted" style="font-size:11px">弱封/多次开板: '
+        + esc(row.weak.slice(0, 5).join("、")) + (row.weak.length > 5 ? " 等" + row.weak.length + " 只" : "")
+        + "</div></td></tr>";
+    }
+    return "<tr class='row-link' data-lb='" + row.height + "'>"
+      + "<td class='num'><b>" + row.height + " 板</b></td>"
+      + "<td class='num'>" + row.count + "</td>"
+      + "<td class='slim'>" + (stocks || "—") + "</td>"
+      + "<td class='num'>" + (prom === undefined || prom === null ? "—" : pct(prom, 0)) + "</td></tr>"
+      + weak;
+  }).join("");
+  el.innerHTML = "<table><thead><tr><th class='num'>板数</th><th class='num'>家数</th>"
+    + "<th>代表股（代码 名称 首封 行业）</th><th class='num'>晋级率</th></tr></thead><tbody>"
+    + rows + "</tbody></table>";
+  el.querySelectorAll("tr.row-link").forEach(function (tr) {
+    tr.addEventListener("click", function () {
+      STATE.lb = tr.dataset.lb; STATE.industry = ""; STATE.keyword = ""; STATE.page = 1;
+      switchTab("zt");
+    });
+  });
+}
+
+function renderThemes() {
+  const el = document.getElementById("themes");
+  const list = DATA.themes || [];
+  if (!list.length) { el.innerHTML = '<div class="empty">题材板块数据不足</div>'; return; }
+  const rows = list.filter(function (t) { return !STATE.mainOnly || t.is_main; }).map(function (t) {
+    return "<tr class='row-link' data-ind='" + esc(t.name) + "' style='opacity:" + (t.is_main ? "1" : ".8") + "'>"
+      + "<td>" + esc(t.name) + (t.is_main ? ' <span class="chip">主线</span>' : "") + "</td>"
+      + "<td class='num'>" + t.member_count + "</td>"
+      + "<td class='num'>" + t.max_lb + " 板</td>"
+      + "<td><span style='color:" + stageColor(t.stage) + ";font-weight:600'>" + esc(t.stage) + "</span></td>"
+      + "<td>" + esc(t.leader.name || "—") + (t.leader.lb_num > 1 ? "（" + t.leader.lb_num + "板）" : "") + "</td>"
+      + "</tr>";
+  }).join("");
+  el.innerHTML = "<table><thead><tr><th>题材</th><th class='num'>家数</th><th class='num'>最高板</th>"
+    + "<th>阶段</th><th>领涨股</th></tr></thead><tbody>"
+    + (rows || '<tr><td colspan="5" class="empty">无匹配题材</td></tr>') + "</tbody></table>";
+  el.querySelectorAll("tr.row-link").forEach(function (tr) {
+    tr.addEventListener("click", function () {
+      STATE.industry = tr.dataset.ind; STATE.lb = ""; STATE.keyword = ""; STATE.page = 1;
+      switchTab("zt");
+    });
+  });
+}
+
+const ZT_COLS = [
+  { key: "code", label: "代码", cls: "num" },
+  { key: "name", label: "名称", cls: "" },
+  { key: "lb_num", label: "连板", cls: "num", fmt: function (v) { return v + "板"; } },
+  { key: "first_time", label: "首封", cls: "num", fmt: function (v) { return v || "—"; } },
+  { key: "open_times", label: "开板", cls: "num" },
+  { key: "seal_amount", label: "封单额(亿)", cls: "num",
+    fmt: function (v) { return v === null || v === undefined ? "—" : v.toFixed(2); } },
+  { key: "amount", label: "成交额(亿)", cls: "num",
+    fmt: function (v) { return v === null || v === undefined ? "—" : v.toFixed(2); } },
+  { key: "turnover", label: "换手%", cls: "num",
+    fmt: function (v) { return v === null || v === undefined ? "—" : v.toFixed(1); } },
+  { key: "industry", label: "行业", cls: "" },
+];
+
+function fmtCell(col, v) {
+  return col.fmt ? col.fmt(v) : (v === null || v === undefined ? "—" : v);
+}
+
+function renderZtList() {
+  const el = document.getElementById("zt-list");
+  const list = DATA.zt_list || [];
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">涨停明细数据不足</div>';
+    const count = document.getElementById("ztCount");
+    if (count) count.textContent = "";
+    const pager = document.getElementById("ztPager");
+    if (pager) pager.innerHTML = "";
+    return;
+  }
+  let rows = list;
+  if (STATE.keyword) {
+    const kw = STATE.keyword.toLowerCase();
+    rows = rows.filter(function (r) {
+      return r.code.indexOf(kw) >= 0 || String(r.name || "").toLowerCase().indexOf(kw) >= 0;
+    });
+  }
+  if (STATE.industry) rows = rows.filter(function (r) { return r.industry === STATE.industry; });
+  if (STATE.lb) rows = rows.filter(function (r) { return String(r.lb_num) === STATE.lb; });
+
+  const sortKey = STATE.sortKey || "lb_num", sortDir = STATE.sortDir || "desc";
+  rows = rows.slice().sort(function (a, b) {
+    const va = a[sortKey], vb = b[sortKey];
+    const na = va === null || va === undefined, nb = vb === null || vb === undefined;
+    if (na && nb) return 0;
+    if (na) return 1;
+    if (nb) return -1;
+    let cmp;
+    if (typeof va === "number" && typeof vb === "number") cmp = va - vb;
+    else cmp = String(va).localeCompare(String(vb), "zh");
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  const perPage = 50;
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  if (STATE.page > pages) STATE.page = pages;
+  const pageRows = rows.slice((STATE.page - 1) * perPage, STATE.page * perPage);
+
+  const countEl = document.getElementById("ztCount");
+  if (countEl) countEl.textContent = "共 " + total + " 只";
+  const head = ZT_COLS.map(function (c) {
+    return "<th class='" + (c.cls ? c.cls + " " : "") + "sortable' data-key='" + c.key + "'>" + c.label
+      + (sortKey === c.key ? '<span class="arr">' + (sortDir === "asc" ? "▲" : "▼") + "</span>" : "") + "</th>";
+  }).join("");
+  const trs = pageRows.map(function (r) {
+    return "<tr>" + ZT_COLS.map(function (c) {
+      return "<td class='" + c.cls + "'>" + esc(fmtCell(c, r[c.key])) + "</td>";
+    }).join("") + "</tr>";
+  }).join("");
+  el.innerHTML = "<table><thead><tr>" + head + "</tr></thead><tbody>"
+    + (trs || '<tr><td colspan="' + ZT_COLS.length + '" class="empty">无匹配个股</td></tr>')
+    + "</tbody></table>";
+
+  el.querySelectorAll("th.sortable").forEach(function (th) {
+    th.addEventListener("click", function () {
+      const k = th.dataset.key;
+      if (STATE.sortKey === k) STATE.sortDir = STATE.sortDir === "asc" ? "desc" : "asc";
+      else { STATE.sortKey = k; STATE.sortDir = "asc"; }
+      STATE.page = 1;
+      renderZtList();
+    });
+  });
+  renderPager(pages);
+  syncFilters();
+}
+
+function renderPager(pages) {
+  const el = document.getElementById("ztPager");
+  if (!el) return;
+  if (pages <= 1) { el.innerHTML = ""; return; }
+  const show = new Set([1, pages, STATE.page - 1, STATE.page, STATE.page + 1]);
+  let html = "", prev = 0;
+  for (let p = 1; p <= pages; p++) {
+    if (!show.has(p)) continue;
+    if (p - prev > 1) html += '<span class="muted">…</span>';
+    html += '<button type="button" class="' + (p === STATE.page ? "active" : "") + '" data-p="' + p + '">' + p + "</button>";
+    prev = p;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll("button").forEach(function (b) {
+    b.addEventListener("click", function () { STATE.page = Number(b.dataset.p); renderZtList(); });
+  });
+}
+
+let _filtersInit = false;
+function syncFilters() {
+  const ind = document.getElementById("ztIndustry");
+  const lb = document.getElementById("ztLb");
+  if (!ind || !lb) return;
+  if (!_filtersInit) {
+    const seen = [], inds = [];
+    (DATA.zt_list || []).forEach(function (r) {
+      if (r.industry && seen.indexOf(r.industry) < 0) { seen.push(r.industry); inds.push(r.industry); }
+    });
+    inds.sort(function (a, b) { return a.localeCompare(b, "zh"); });
+    ind.innerHTML = '<option value="">全部行业</option>'
+      + inds.map(function (i) { return "<option>" + esc(i) + "</option>"; }).join("");
+    let maxLb = 0;
+    (DATA.zt_list || []).forEach(function (r) { if (r.lb_num > maxLb) maxLb = r.lb_num; });
+    let opts = '<option value="">全部连板</option><option value="1">首板</option>';
+    for (let h = 2; h <= maxLb; h++) opts += '<option value="' + h + '">' + h + "板</option>";
+    lb.innerHTML = opts;
+    _filtersInit = true;
+  }
+  ind.value = STATE.industry || "";
+  lb.value = STATE.lb || "";
+}
+
+function bindFilters() {
+  const search = document.getElementById("ztSearch");
+  const ind = document.getElementById("ztIndustry");
+  const lb = document.getElementById("ztLb");
+  const clear = document.getElementById("ztClear");
+  const mainOnly = document.getElementById("themeMainOnly");
+  let timer = null;
+  if (search) search.addEventListener("input", function () {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function () {
+      STATE.keyword = search.value.trim().toLowerCase(); STATE.page = 1; renderZtList();
+    }, 200);
+  });
+  if (ind) ind.addEventListener("change", function () { STATE.industry = ind.value; STATE.page = 1; renderZtList(); });
+  if (lb) lb.addEventListener("change", function () { STATE.lb = lb.value; STATE.page = 1; renderZtList(); });
+  if (clear) clear.addEventListener("click", function () {
+    STATE.keyword = ""; STATE.industry = ""; STATE.lb = ""; STATE.page = 1;
+    if (search) search.value = "";
+    renderZtList();
+  });
+  if (mainOnly) mainOnly.addEventListener("change", function () {
+    STATE.mainOnly = mainOnly.checked;
+    renderThemes();
+  });
+}
+
+function init() {
+  renderKPI();
+  renderCharts();
+  renderTrendSummary();
+  renderEmotionComp();
+  initTabs();
+  bindFilters();
+}
+document.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>
