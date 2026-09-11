@@ -6,8 +6,9 @@
   <div class="row">
     <div><label>交易日</label><input type="text" id="dDate" placeholder="YYYYMMDD"></div>
     <div><label>近 N 个交易日</label><input type="text" id="dDays" value="10"></div>
+    <div style="align-self:flex-end"><button type="button" id="dashRefresh">重新生成</button></div>
   </div>
-  <div class="muted">打开即加载 KPI + 趋势图表 + 摘要表。有缓存/复盘预写时秒开；轻量采集（仅涨跌停池）冷启动约数十秒。</div>
+  <div class="muted">打开即加载 KPI + 趋势图表 + 摘要表 + 明细面板（连板梯队/题材/涨停个股）。有缓存/复盘预写时秒开；轻量采集（仅涨跌停池）冷启动约数十秒。「重新生成」清缓存强制重拉。</div>
   <div id="dashLoading" class="muted" style="margin-top:8px;color:var(--accent)">
     加载行情数据…（有缓存时秒开）
   </div>
@@ -52,6 +53,19 @@ function scheduleLoad(){
 }
 document.getElementById('dDate').addEventListener('input', scheduleLoad);
 document.getElementById('dDays').addEventListener('input', scheduleLoad);
+/* 强制刷新：清进程内缓存后重载 iframe（重新采集/读盘生成） */
+document.getElementById('dashRefresh').addEventListener('click', function(){
+  loading.style.display = '';
+  fetch('/api/dashboard/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: document.getElementById('dDate').value.trim() || null,
+      days: document.getElementById('dDays').value.trim() || '10'
+    })
+  }).then(function(r){ return r.json(); }).catch(function(){ return {}; })
+    .then(function(){ loadDash(); });
+});
 /* 首屏：优先 ?date= 预填，否则回填最近交易日，就绪后自动加载 */
 var preDate = (location.search.match(/[?&]date=(\d{8})/) || [])[1] || '';
 if(preDate){

@@ -1,10 +1,12 @@
-"""数据看板：近 N 日 KPI + 趋势图表（单文件 HTML，无 AI 文案）。
+"""数据看板：近 N 日 KPI + 趋势图表 + 明细面板（单文件 HTML，无 AI 文案）。
 
-对齐图表化看板（v0.36）：
+对齐图表化看板（v0.36）+ 明细增强（v0.38）：
 - 形态：自包含 `output/{date}_看板.html`，零外链/零 CDN，纯 JS + 内联 SVG 画图
-- 数据：复用 `pipeline.collect(n_days)` + `pipeline.compute()`；趋势行由各日池子逐日核算，
-  情绪温度直接复用 `compute_emotion` 的 `series`（按 date 匹配）
-- 内容：KPI + 2×2 趋势图 + 趋势摘要表 + 情绪成分拆解；无 LLM、无梯队/题材/炸板/龙虎榜明细
+- 数据：复用 `pipeline.collect_dashboard`（轻量）+ `collect_dashboard_detail`（明细读盘）；
+  趋势行由各日池子逐日核算，情绪温度直接复用 `compute_emotion` 的 `series`（按 date 匹配）
+- 内容：KPI（6 基础 + 6 明细）+ 2×2 趋势图 + 趋势摘要表 + 情绪成分拆解
+  + Tab 三面板（总览 / 市场结构=连板梯队+题材板块 / 涨停个股明细）；无 LLM
+- 交互：Tab 切换、表格排序/搜索/筛选、跨面板联动下钻、图表悬浮提示、分页（纯内联 JS）
 - 图表遵循 dataviz 规范：单轴、≥2 序列必有图例、瘦标记、1px 网格、深/浅色双主题
 """
 
@@ -75,13 +77,40 @@ def build_trend(collected: dict, indicators: dict, n_days: int = DEFAULT_N_DAYS)
 
 # ---------------------------------------------------------------- 前端载荷（render_html 的 DATA）
 
-def _assemble_payload(indicators: dict, trend: list[dict], collected: dict) -> dict:
-    """前端 `const DATA`：趋势行 + KPI + 情绪成分（无明细章节）。"""
+def _themes_compact(themes: list[dict]) -> list[dict]:
+    """题材精简（payload 减体积）：只保留看板面板需要的字段。"""
+    out: list[dict] = []
+    for t in themes:
+        leader = t.get("leader") or {}
+        out.append({
+            "name": t.get("theme_name", ""),
+            "member_count": t.get("member_count", 0),
+            "max_lb": t.get("max_lb", 0),
+            "stage": t.get("stage", ""),
+            "stage_reason": t.get("stage_reason", ""),
+            "leader": {
+                "code": leader.get("code", ""),
+                "name": leader.get("name", ""),
+                "lb_num": leader.get("lb_num", 0),
+            },
+            "is_main": bool(t.get("is_main")),
+        })
+    return out
+
+
+def _assemble_payload(indicators: dict, trend: list[dict], collected: dict,
+                      detail: dict | None = None) -> dict:
+    """前端 `const DATA`：趋势行 + KPI + 情绪成分 + 明细面板（梯队/题材/涨停明细）。
+
+    detail: compute_dashboard_detail 产出；None → 仅基础看板（明细键不注入，前端空态）。
+    """
     ladder = indicators.get("ladder", {})
     emo = indicators.get("emotion") or {}
     trade_date = collected["trade_date"]
     today = trend[-1] if trend else {}
-    return {
+    d_ladder = (detail or {}).get("ladder") or {}
+    flags = (detail or {}).get("flags") or {}
+    payload = {
         "trade_date": trade_date,
         "weekday": _weekday_cn(trade_date),
         "n_days": len(trend),
@@ -96,6 +125,13 @@ def _assemble_payload(indicators: dict, trend: list[dict], collected: dict) -> d
             "max_lb_stock": ladder.get("max_lb_stock", ""),
             "break_rate": ladder.get("break_rate", 0.0),
             "dt_count": today.get("dt_count", 0),
+            # v0.38 新增（detail 缺省时 None → 前端隐藏对应卡片）
+            "first_board_count": d_ladder.get("first_board_count"),
+            "promote_rate": (detail or {}).get("promote_rate"),
+            "height_position": d_ladder.get("height_position"),
+            "zt_amount": (detail or {}).get("zt_amount"),
+            "mf_net": (detail or {}).get("mf_net"),
+            "lhb_net": (detail or {}).get("lhb_net"),
         },
         "emotion": {
             "available": bool(emo.get("available")),
@@ -106,6 +142,15 @@ def _assemble_payload(indicators: dict, trend: list[dict], collected: dict) -> d
             "raw": emo.get("raw", {}),
         },
     }
+    if detail is not None:
+        payload["ladder"] = {
+            "ladder": d_ladder.get("ladder", []),
+            "promotion": d_ladder.get("promotion", {}),
+        }
+        payload["themes"] = _themes_compact((detail or {}).get("themes", []))
+        payload["zt_list"] = (detail or {}).get("zt_list", [])
+        payload["flags"] = flags
+    return payload
 
 
 # ---------------------------------------------------------------- HTML 渲染
@@ -186,6 +231,49 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tbody tr:nth-child(even) { background: rgba(128,128,128,.05); }
 .up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--ink-2); }
 .empty { color: var(--ink-3); font-size: 12px; }
+/* ---- v0.38：Tab 导航 / 明细面板 / 交互 ---- */
+.tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
+  padding-bottom: 8px; overflow-x: auto; }
+.tab { background: none; border: 1px solid var(--border); color: var(--ink-2);
+  padding: 5px 16px; border-radius: 6px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.tab.active { background: rgba(31,111,235,.14); border-color: var(--chip); color: var(--ink); font-weight: 600; }
+.tab-panel { margin-bottom: 8px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 6px; }
+.panel-head h2 { margin: 0; }
+.inline-check { font-size: 12px; color: var(--ink-2); display: inline-flex; align-items: center;
+  gap: 4px; cursor: pointer; }
+.filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+.filter-bar input[type=text] { background: var(--bg); border: 1px solid var(--border); color: var(--ink);
+  border-radius: 6px; padding: 5px 10px; font-size: 12px; width: 170px; }
+.filter-bar select { background: var(--bg); border: 1px solid var(--border); color: var(--ink);
+  border-radius: 6px; padding: 5px 8px; font-size: 12px; max-width: 180px; }
+.filter-bar button { background: none; border: 1px solid var(--border); color: var(--ink-2);
+  border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; }
+.filter-bar button:hover { color: var(--ink); border-color: var(--chip); }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--ink); }
+.arr { font-size: 10px; color: var(--chip); margin-left: 2px; }
+tr.row-link { cursor: pointer; }
+tr.row-link:hover td { background: rgba(31,111,235,.08); }
+td.slim { max-width: 260px; white-space: normal; }
+.pager { display: flex; gap: 4px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.pager button { background: none; border: 1px solid var(--border); color: var(--ink-2);
+  border-radius: 5px; min-width: 26px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+.pager button:hover { color: var(--ink); }
+.pager button.active { background: rgba(31,111,235,.16); border-color: var(--chip); color: var(--ink); font-weight: 600; }
+.hint { font-size: 11px; color: var(--ink-3); margin-top: 4px; }
+.kpi.clickable { cursor: pointer; transition: border-color .15s; }
+.kpi.clickable:hover { border-color: var(--chip); }
+.table-wrap { overflow-x: auto; }
+.chart-tip { position: absolute; pointer-events: none; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 11px;
+  color: var(--ink); display: none; z-index: 5; box-shadow: 0 2px 8px rgba(0,0,0,.3);
+  max-width: 260px; }
+@media (max-width: 767px) {
+  .filter-bar input[type=text] { width: 100%; }
+  .tabs .tab { flex: 1; }
+}
 </style>
 </head>
 <body>
@@ -195,6 +283,13 @@ tbody tr:nth-child(even) { background: rgba(128,128,128,.05); }
     <div class="sub">近__N_DAYS__个交易日 · 收盘数据</div>
   </header>
 
+  <nav class="tabs" id="tabs">
+    <button type="button" class="tab active" data-tab="overview">总览</button>
+    <button type="button" class="tab" data-tab="structure">市场结构</button>
+    <button type="button" class="tab" data-tab="zt">涨停明细</button>
+  </nav>
+
+  <section id="tab-overview" class="tab-panel">
   <section class="kpi-grid" id="kpi"></section>
 
   <section class="charts">
@@ -223,6 +318,35 @@ tbody tr:nth-child(even) { background: rgba(128,128,128,.05); }
   <section class="tables">
     <div class="panel"><h2>近__N_DAYS__日趋势摘要</h2><div id="trend-summary"></div></div>
     <div class="panel"><h2>情绪温度成分拆解</h2><div id="emotion-comp"></div></div>
+  </section>
+  </section><!-- /tab-overview -->
+
+  <section id="tab-structure" class="tab-panel" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>连板梯队</h2></div>
+      <div class="table-wrap" id="ladder"></div>
+      <div class="hint">点击板数行 → 在「涨停明细」按该板数过滤</div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h2>题材板块</h2>
+        <label class="inline-check"><input type="checkbox" id="themeMainOnly"> 仅看主线</label></div>
+      <div class="table-wrap" id="themes"></div>
+      <div class="hint">点击题材行 → 在「涨停明细」按该行业过滤</div>
+    </div>
+  </section>
+
+  <section id="tab-zt" class="tab-panel" hidden>
+    <div class="panel">
+      <div class="panel-head"><h2>涨停个股明细</h2><span id="ztCount" class="muted"></span></div>
+      <div class="filter-bar">
+        <input type="text" id="ztSearch" placeholder="搜索代码/名称">
+        <select id="ztIndustry"><option value="">全部行业</option></select>
+        <select id="ztLb"><option value="">全部连板</option></select>
+        <button type="button" id="ztClear">清空筛选</button>
+      </div>
+      <div class="table-wrap" id="zt-list"></div>
+      <div id="ztPager" class="pager"></div>
+    </div>
   </section>
 </div>
 
@@ -328,6 +452,7 @@ function drawLineChart(svg, rows, series, opts) {
         const ti = document.createElementNS(NS, "title");
         ti.textContent = fmtDate(r.date) + " · " + sr.label + " " + (sr.fmt ? sr.fmt(v) : v);
         c.appendChild(ti);
+        attachTip(c, ti);
         svg.appendChild(c);
       } else {
         flushSeg(pts);
@@ -382,6 +507,7 @@ function drawBarChart(svg, rows, key, opts) {
     const ti = document.createElementNS(NS, "title");
     ti.textContent = fmtDate(r.date) + " · " + v + valueLabel;
     rect.appendChild(ti);
+    attachTip(rect, ti);
     if (v === Math.max(...rows.map(rr => rr[key] || 0))) {
       const lbl = document.createElementNS(NS, "text");
       lbl.setAttribute("x", x + barW / 2); lbl.setAttribute("y", y - 5);
@@ -410,25 +536,52 @@ function stageColor(stage) {
 
 function renderKPI() {
   const k = DATA.kpi, emo = DATA.emotion;
+  const hp = k.height_position || {};
   const cards = [
     { label: "情绪温度", value: emo.available ? k.emotion_score : "—",
       valueCls: emo.available ? stageColor(k.emotion_stage) : "",
       bar: emo.available ? stageColor(k.emotion_stage) : "var(--accent)",
       sub: emo.available ? '<span class="chip" style="color:' + stageColor(k.emotion_stage)
         + '">' + esc(k.emotion_stage) + "</span>" : "数据不足" },
-    { label: "涨停家数", value: k.zt_count, valueCls: "var(--up)", bar: "var(--up)" },
-    { label: "连板家数", value: k.lianban_count, valueCls: "var(--up)", bar: "var(--accent-2)" },
+    { label: "涨停家数", value: k.zt_count, valueCls: "var(--up)", bar: "var(--up)", goto: "zt" },
+    { label: "连板家数", value: k.lianban_count, valueCls: "var(--up)", bar: "var(--accent-2)", goto: "structure" },
     { label: "空间板高度", value: k.max_lb + " 板", valueCls: "var(--accent)", bar: "var(--accent)",
-      sub: esc(k.max_lb_stock) },
+      sub: esc(k.max_lb_stock), goto: "structure" },
     { label: "炸板率", value: pct(k.break_rate, 0), valueCls: "var(--warn)", bar: "var(--warn)" },
     { label: "跌停家数", value: k.dt_count, valueCls: k.dt_count > 0 ? "var(--down)" : "",
       bar: "var(--down)" },
+    { label: "首板家数", value: k.first_board_count, valueCls: "var(--up)", bar: "var(--accent-3)",
+      goto: "zt", nullHide: true },
+    { label: "晋级率", value: k.promote_rate === null || k.promote_rate === undefined
+        ? null : pct(k.promote_rate, 0),
+      valueCls: "var(--accent-2)", bar: "var(--accent-2)", sub: "今日连板 ÷ 昨日涨停",
+      goto: "structure", nullHide: true },
+    { label: "最高板位置", value: hp.label || null, valueCls: "var(--accent)", bar: "var(--accent)",
+      sub: (hp.trend || "") + (hp.percentile !== undefined && hp.percentile !== null
+        ? " · 分位 " + Math.round(hp.percentile * 100) + "%" : ""), nullHide: true },
+    { label: "炸板净流出", value: k.mf_net === null || k.mf_net === undefined
+        ? null : Math.abs(k.mf_net).toFixed(2) + " 亿",
+      valueCls: upDown(k.mf_net), bar: k.mf_net < 0 ? "var(--down)" : "var(--up)",
+      sub: "炸板股主力净额", nullHide: true },
+    { label: "龙虎榜净买", value: k.lhb_net === null || k.lhb_net === undefined
+        ? null : Math.abs(k.lhb_net).toFixed(2) + " 亿",
+      valueCls: upDown(k.lhb_net), bar: k.lhb_net < 0 ? "var(--down)" : "var(--up)",
+      sub: "净买额", nullHide: true },
+    { label: "涨停总成交额", value: k.zt_amount === null || k.zt_amount === undefined
+        ? null : k.zt_amount.toFixed(2) + " 亿",
+      valueCls: "", bar: "var(--accent)", nullHide: true },
   ];
-  document.getElementById("kpi").innerHTML = cards.map(c =>
-    '<div class="kpi" style="border-left-color:' + (c.bar || "var(--accent)") + '">'
-    + '<div class="label">' + esc(c.label) + '</div>'
-    + '<div class="value" style="color:' + c.valueCls + '">' + esc(c.value) + "</div>"
-    + (c.sub ? '<div class="sub">' + c.sub + "</div>" : "") + "</div>").join("");
+  const html = cards
+    .filter(c => !c.nullHide || (c.value !== null && c.value !== undefined && c.value !== ""))
+    .map(c => '<div class="kpi' + (c.goto ? " clickable" : "") + '" style="border-left-color:'
+      + (c.bar || "var(--accent)") + '"' + (c.goto ? ' data-goto="' + c.goto + '"' : "") + ">"
+      + '<div class="label">' + esc(c.label) + '</div>'
+      + '<div class="value" style="color:' + (c.valueCls || "") + '">' + esc(c.value) + "</div>"
+      + (c.sub ? '<div class="sub">' + c.sub + "</div>" : "") + "</div>").join("");
+  document.getElementById("kpi").innerHTML = html;
+  document.querySelectorAll("#kpi .kpi.clickable").forEach(function (el) {
+    el.addEventListener("click", function () { switchTab(el.dataset.goto); });
+  });
 }
 
 function renderCharts() {
@@ -519,11 +672,285 @@ function renderEmotionComp() {
     + "<th class='num'>成分分(0-100)</th></tr></thead><tbody>" + rows + "</tbody></table>";
 }
 
+/* ---------- 图表悬浮提示（v0.38） ---------- */
+function attachTip(el, titleEl) {
+  el.addEventListener("mousemove", function (ev) {
+    const fig = el.closest("figure");
+    if (!fig) return;
+    let tip = fig.querySelector(".chart-tip");
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.className = "chart-tip";
+      fig.style.position = "relative";
+      fig.appendChild(tip);
+    }
+    tip.textContent = titleEl.textContent;
+    tip.style.display = "block";
+    const r = fig.getBoundingClientRect();
+    tip.style.left = Math.max(4, ev.clientX - r.left + 12) + "px";
+    tip.style.top = Math.max(4, ev.clientY - r.top + 14) + "px";
+  });
+  el.addEventListener("mouseleave", function () {
+    const fig = el.closest("figure");
+    if (!fig) return;
+    const tip = fig.querySelector(".chart-tip");
+    if (tip) tip.style.display = "none";
+  });
+}
+
+/* ---------- Tab / 状态 / 联动（v0.38） ---------- */
+const STATE = { tab: "overview", sortKey: "lb_num", sortDir: "desc",
+  keyword: "", industry: "", lb: "", page: 1, mainOnly: false };
+
+function switchTab(name) {
+  STATE.tab = name;
+  document.querySelectorAll(".tab").forEach(function (b) {
+    b.classList.toggle("active", b.dataset.tab === name);
+  });
+  ["overview", "structure", "zt"].forEach(function (t) {
+    const el = document.getElementById("tab-" + t);
+    if (el) el.hidden = (t !== name);
+  });
+  if (name === "structure") renderStructure();
+  if (name === "zt") renderZtList();
+  try { sessionStorage.setItem("dashTab", name); } catch (e) {}
+  try { if (window.parent && window.parent.fitFrame) window.parent.fitFrame(); } catch (e) {}
+}
+
+function initTabs() {
+  document.querySelectorAll(".tab").forEach(function (b) {
+    b.addEventListener("click", function () { switchTab(b.dataset.tab); });
+  });
+  let saved = null;
+  try { saved = sessionStorage.getItem("dashTab"); } catch (e) {}
+  if (saved === "structure" || saved === "zt") switchTab(saved);
+}
+
+function renderStructure() {
+  renderLadder();
+  renderThemes();
+}
+
+function renderLadder() {
+  const el = document.getElementById("ladder");
+  const d = DATA.ladder;
+  if (!d || !d.ladder || !d.ladder.length) {
+    el.innerHTML = '<div class="empty">连板梯队数据不足</div>';
+    return;
+  }
+  const rows = d.ladder.map(function (row) {
+    const prom = d.promotion ? d.promotion[row.height + "进" + (row.height + 1)] : undefined;
+    const stocks = (row.stocks || []).map(function (s) { return esc(s); }).join("<br>");
+    let weak = "";
+    if (row.weak && row.weak.length) {
+      weak = '<tr class="weak-row"><td></td><td></td><td colspan="2"><div class="muted" style="font-size:11px">弱封/多次开板: '
+        + esc(row.weak.slice(0, 5).join("、")) + (row.weak.length > 5 ? " 等" + row.weak.length + " 只" : "")
+        + "</div></td></tr>";
+    }
+    return "<tr class='row-link' data-lb='" + row.height + "'>"
+      + "<td class='num'><b>" + row.height + " 板</b></td>"
+      + "<td class='num'>" + row.count + "</td>"
+      + "<td class='slim'>" + (stocks || "—") + "</td>"
+      + "<td class='num'>" + (prom === undefined || prom === null ? "—" : pct(prom, 0)) + "</td></tr>"
+      + weak;
+  }).join("");
+  el.innerHTML = "<table><thead><tr><th class='num'>板数</th><th class='num'>家数</th>"
+    + "<th>代表股（代码 名称 首封 行业）</th><th class='num'>晋级率</th></tr></thead><tbody>"
+    + rows + "</tbody></table>";
+  el.querySelectorAll("tr.row-link").forEach(function (tr) {
+    tr.addEventListener("click", function () {
+      STATE.lb = tr.dataset.lb; STATE.industry = ""; STATE.keyword = ""; STATE.page = 1;
+      switchTab("zt");
+    });
+  });
+}
+
+function renderThemes() {
+  const el = document.getElementById("themes");
+  const list = DATA.themes || [];
+  if (!list.length) { el.innerHTML = '<div class="empty">题材板块数据不足</div>'; return; }
+  const rows = list.filter(function (t) { return !STATE.mainOnly || t.is_main; }).map(function (t) {
+    return "<tr class='row-link' data-ind='" + esc(t.name) + "' style='opacity:" + (t.is_main ? "1" : ".8") + "'>"
+      + "<td>" + esc(t.name) + (t.is_main ? ' <span class="chip">主线</span>' : "") + "</td>"
+      + "<td class='num'>" + t.member_count + "</td>"
+      + "<td class='num'>" + t.max_lb + " 板</td>"
+      + "<td><span style='color:" + stageColor(t.stage) + ";font-weight:600'>" + esc(t.stage) + "</span></td>"
+      + "<td>" + esc(t.leader.name || "—") + (t.leader.lb_num > 1 ? "（" + t.leader.lb_num + "板）" : "") + "</td>"
+      + "</tr>";
+  }).join("");
+  el.innerHTML = "<table><thead><tr><th>题材</th><th class='num'>家数</th><th class='num'>最高板</th>"
+    + "<th>阶段</th><th>领涨股</th></tr></thead><tbody>"
+    + (rows || '<tr><td colspan="5" class="empty">无匹配题材</td></tr>') + "</tbody></table>";
+  el.querySelectorAll("tr.row-link").forEach(function (tr) {
+    tr.addEventListener("click", function () {
+      STATE.industry = tr.dataset.ind; STATE.lb = ""; STATE.keyword = ""; STATE.page = 1;
+      switchTab("zt");
+    });
+  });
+}
+
+const ZT_COLS = [
+  { key: "code", label: "代码", cls: "num" },
+  { key: "name", label: "名称", cls: "" },
+  { key: "lb_num", label: "连板", cls: "num", fmt: function (v) { return v + "板"; } },
+  { key: "first_time", label: "首封", cls: "num", fmt: function (v) { return v || "—"; } },
+  { key: "open_times", label: "开板", cls: "num" },
+  { key: "seal_amount", label: "封单额(亿)", cls: "num",
+    fmt: function (v) { return v === null || v === undefined ? "—" : v.toFixed(2); } },
+  { key: "amount", label: "成交额(亿)", cls: "num",
+    fmt: function (v) { return v === null || v === undefined ? "—" : v.toFixed(2); } },
+  { key: "turnover", label: "换手%", cls: "num",
+    fmt: function (v) { return v === null || v === undefined ? "—" : v.toFixed(1); } },
+  { key: "industry", label: "行业", cls: "" },
+];
+
+function fmtCell(col, v) {
+  return col.fmt ? col.fmt(v) : (v === null || v === undefined ? "—" : v);
+}
+
+function renderZtList() {
+  const el = document.getElementById("zt-list");
+  const list = DATA.zt_list || [];
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">涨停明细数据不足</div>';
+    const count = document.getElementById("ztCount");
+    if (count) count.textContent = "";
+    const pager = document.getElementById("ztPager");
+    if (pager) pager.innerHTML = "";
+    return;
+  }
+  let rows = list;
+  if (STATE.keyword) {
+    const kw = STATE.keyword.toLowerCase();
+    rows = rows.filter(function (r) {
+      return r.code.indexOf(kw) >= 0 || String(r.name || "").toLowerCase().indexOf(kw) >= 0;
+    });
+  }
+  if (STATE.industry) rows = rows.filter(function (r) { return r.industry === STATE.industry; });
+  if (STATE.lb) rows = rows.filter(function (r) { return String(r.lb_num) === STATE.lb; });
+
+  const sortKey = STATE.sortKey || "lb_num", sortDir = STATE.sortDir || "desc";
+  rows = rows.slice().sort(function (a, b) {
+    const va = a[sortKey], vb = b[sortKey];
+    const na = va === null || va === undefined, nb = vb === null || vb === undefined;
+    if (na && nb) return 0;
+    if (na) return 1;
+    if (nb) return -1;
+    let cmp;
+    if (typeof va === "number" && typeof vb === "number") cmp = va - vb;
+    else cmp = String(va).localeCompare(String(vb), "zh");
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  const perPage = 50;
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  if (STATE.page > pages) STATE.page = pages;
+  const pageRows = rows.slice((STATE.page - 1) * perPage, STATE.page * perPage);
+
+  const countEl = document.getElementById("ztCount");
+  if (countEl) countEl.textContent = "共 " + total + " 只";
+  const head = ZT_COLS.map(function (c) {
+    return "<th class='" + (c.cls ? c.cls + " " : "") + "sortable' data-key='" + c.key + "'>" + c.label
+      + (sortKey === c.key ? '<span class="arr">' + (sortDir === "asc" ? "▲" : "▼") + "</span>" : "") + "</th>";
+  }).join("");
+  const trs = pageRows.map(function (r) {
+    return "<tr>" + ZT_COLS.map(function (c) {
+      return "<td class='" + c.cls + "'>" + esc(fmtCell(c, r[c.key])) + "</td>";
+    }).join("") + "</tr>";
+  }).join("");
+  el.innerHTML = "<table><thead><tr>" + head + "</tr></thead><tbody>"
+    + (trs || '<tr><td colspan="' + ZT_COLS.length + '" class="empty">无匹配个股</td></tr>')
+    + "</tbody></table>";
+
+  el.querySelectorAll("th.sortable").forEach(function (th) {
+    th.addEventListener("click", function () {
+      const k = th.dataset.key;
+      if (STATE.sortKey === k) STATE.sortDir = STATE.sortDir === "asc" ? "desc" : "asc";
+      else { STATE.sortKey = k; STATE.sortDir = "asc"; }
+      STATE.page = 1;
+      renderZtList();
+    });
+  });
+  renderPager(pages);
+  syncFilters();
+}
+
+function renderPager(pages) {
+  const el = document.getElementById("ztPager");
+  if (!el) return;
+  if (pages <= 1) { el.innerHTML = ""; return; }
+  const show = new Set([1, pages, STATE.page - 1, STATE.page, STATE.page + 1]);
+  let html = "", prev = 0;
+  for (let p = 1; p <= pages; p++) {
+    if (!show.has(p)) continue;
+    if (p - prev > 1) html += '<span class="muted">…</span>';
+    html += '<button type="button" class="' + (p === STATE.page ? "active" : "") + '" data-p="' + p + '">' + p + "</button>";
+    prev = p;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll("button").forEach(function (b) {
+    b.addEventListener("click", function () { STATE.page = Number(b.dataset.p); renderZtList(); });
+  });
+}
+
+let _filtersInit = false;
+function syncFilters() {
+  const ind = document.getElementById("ztIndustry");
+  const lb = document.getElementById("ztLb");
+  if (!ind || !lb) return;
+  if (!_filtersInit) {
+    const seen = [], inds = [];
+    (DATA.zt_list || []).forEach(function (r) {
+      if (r.industry && seen.indexOf(r.industry) < 0) { seen.push(r.industry); inds.push(r.industry); }
+    });
+    inds.sort(function (a, b) { return a.localeCompare(b, "zh"); });
+    ind.innerHTML = '<option value="">全部行业</option>'
+      + inds.map(function (i) { return "<option>" + esc(i) + "</option>"; }).join("");
+    let maxLb = 0;
+    (DATA.zt_list || []).forEach(function (r) { if (r.lb_num > maxLb) maxLb = r.lb_num; });
+    let opts = '<option value="">全部连板</option><option value="1">首板</option>';
+    for (let h = 2; h <= maxLb; h++) opts += '<option value="' + h + '">' + h + "板</option>";
+    lb.innerHTML = opts;
+    _filtersInit = true;
+  }
+  ind.value = STATE.industry || "";
+  lb.value = STATE.lb || "";
+}
+
+function bindFilters() {
+  const search = document.getElementById("ztSearch");
+  const ind = document.getElementById("ztIndustry");
+  const lb = document.getElementById("ztLb");
+  const clear = document.getElementById("ztClear");
+  const mainOnly = document.getElementById("themeMainOnly");
+  let timer = null;
+  if (search) search.addEventListener("input", function () {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function () {
+      STATE.keyword = search.value.trim().toLowerCase(); STATE.page = 1; renderZtList();
+    }, 200);
+  });
+  if (ind) ind.addEventListener("change", function () { STATE.industry = ind.value; STATE.page = 1; renderZtList(); });
+  if (lb) lb.addEventListener("change", function () { STATE.lb = lb.value; STATE.page = 1; renderZtList(); });
+  if (clear) clear.addEventListener("click", function () {
+    STATE.keyword = ""; STATE.industry = ""; STATE.lb = ""; STATE.page = 1;
+    if (search) search.value = "";
+    renderZtList();
+  });
+  if (mainOnly) mainOnly.addEventListener("change", function () {
+    STATE.mainOnly = mainOnly.checked;
+    renderThemes();
+  });
+}
+
 function init() {
   renderKPI();
   renderCharts();
   renderTrendSummary();
   renderEmotionComp();
+  initTabs();
+  bindFilters();
 }
 document.addEventListener("DOMContentLoaded", init);
 </script>
@@ -599,19 +1026,31 @@ def generate_dashboard(
 ) -> str:
     """生成数据看板 HTML 并落盘，返回文本。
 
-    流程：collect_dashboard → compute_dashboard → build_trend → render_html → 落盘。
-    轻量路径只拉 N 日涨停/炸板/跌停池（有 CSV 则读盘），不拉资金流/龙虎榜/概念。
+    流程：collect_dashboard（轻量）→ compute_dashboard → collect_dashboard_detail（明细读盘）
+    → compute_dashboard_detail → build_trend → render_html → 落盘。
+    明细面板失败时降级为基础看板（不影响生成）。
     out_path 缺省：output/{trade_date}_看板.html。
     api_key / no_llm 保留兼容旧调用方（看板不再调用 LLM）。
     """
     del api_key, no_llm  # 兼容签名，不再使用
-    from daily_review.pipeline import collect_dashboard, compute_dashboard
+    from daily_review.pipeline import (
+        collect_dashboard,
+        collect_dashboard_detail,
+        compute_dashboard,
+        compute_dashboard_detail,
+    )
 
-    print(f"[看板] 交易日 {trade_date}，近 {n_days} 个交易日（轻量采集）")
+    print(f"[看板] 交易日 {trade_date}，近 {n_days} 个交易日（轻量采集 + 明细读盘）")
     collected = collect_dashboard(trade_date, n_days=n_days)
     indicators = compute_dashboard(collected)
+    try:
+        detail = collect_dashboard_detail(trade_date, n_days=n_days)
+        detail_indicators = compute_dashboard_detail(collected, detail)
+    except Exception as exc:  # noqa: BLE001 —— 明细失败降级基础看板
+        print(f"[看板] 明细组装失败（降级为基础看板）：{type(exc).__name__}: {exc}")
+        detail_indicators = None
     trend = build_trend(collected, indicators, n_days)
-    payload = _assemble_payload(indicators, trend, collected)
+    payload = _assemble_payload(indicators, trend, collected, detail_indicators)
     html_text = render_html(payload)
 
     settings = get_settings()

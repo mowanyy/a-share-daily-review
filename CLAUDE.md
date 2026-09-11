@@ -8,6 +8,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.38.0`：**数据看板内容全面性 + 可交互性（客服视角）——Tab 三面板 + 明细面板 + 前端交互，620 测试通过**。按 `docs/数据看板完善方案.md` 一期落地（单文件内增强，保持零外链自包含、可独立分享）：① **内容**：Tab 三面板——总览（KPI 6→12 张，新增首板家数/晋级率/最高板位置/炸板净流出/龙虎榜净买/涨停总成交额，缺失自动隐藏）/ 市场结构（连板梯队表：板数×家数×代表股×晋级率；题材板块表：题材×家数×最高板×阶段×领涨股×主线标记 +「仅看主线」开关）/ 涨停明细（当日全部涨停股：代码/名称/连板/首封/开板次数/封单额/成交额/换手/行业，50/页分页）。② **交互（纯内联 JS）**：Tab 切换（sessionStorage 记忆）、表头点击排序、代码/名称搜索防抖、行业与连板数筛选、跨面板联动下钻（点 KPI/梯队板数/题材行 → 跳 Tab 自动过滤）、图表悬浮 tooltip 浮层、移动端适配。③ **数据零新增采集**：新增 `pipeline.collect_dashboard_detail`/`compute_dashboard_detail`——prev_zt/height_series 由历史 zt_pool CSV 重建，moneyflow/lhb 读盘可选项（缺 → 面板降级/卡片隐藏，不联网）；复用 `compute_ladder`/`build_themes`。④ **Web 适配**：`/api/dashboard/view` 生成链路走明细路径（失败降级基础看板）；新增 `POST /api/dashboard/refresh` 强制刷新 + `/dashboard` 页「重新生成」按钮（清进程内缓存）。⑤ **测试**：test_dashboard.py 面板断言翻转（旧「无明细」→ 新「面板存在」）+ 新增 8 例（detail 组装/晋级率口径/缺失降级/读盘重建/生成降级/refresh API）。**620 测试通过**。
+
 `v0.37.1`：**版本控制规划（分支策略落地）**。引入**轻量 GitHub Flow 变体**：新功能/较大改动从 main 开 `feature/<功能名>` 分支迭代开发（分支内不 bump 版本、不打 tag），完成时 pytest 全量通过 + 状态审查 → squash 合并回 main → **功能合并才 bump** MINOR 版本并打 tag；小修（bugfix/文档/环境同步/测试调整）直接提交 main 并 bump PATCH；回滚一律 `git revert`（禁 `git reset` 改写公共历史）、tag 不可移动。`data-branch` 自动维护不动。完整规则见 `docs/版本管理.md`（第 0/2 节）。
 
 `v0.37.0`：**Agent 内容评估（L0/L1：确定性校验 + 数据回比，零 LLM 零网络）**。新增 `eval/` 包（`models.py` + `checks.py` L0 规则 + `extract.py` 数字抽取 + `verify.py` L1 回比）+ CLI `eval` 子命令 + audit.db `evaluations` 表 + 14 例回归测试。L0（EVAL-001~006）：产物存在与七章结构完整/交易日合法性（离线读日历）/数据缺失标注纪律/合规扫描（只扫 LLM 生成章节，强荐股话术=error、交易建议词=warn）/正文长度。L1（EVAL-101~111）：报告关键数字与权威快照 `data/review_snapshots/{date}.json` 回比（情绪温度/涨停/连板/首板/最高板/龙头/炸板率/晋级率/昨日情绪温度），约数归一化 + 相对误差 5%，快照缺失一律 skip 不误报；plan/open 对照前日快照。CLI `eval --date --type [--json]`，结果写 audit.db `evaluations` 表；golden set 用真实 `output/20260806_复盘.md` 回归。**612 测试通过**。方案文档 `docs/Agent内容评估方案.md`；明确不做 LLM 互评。
@@ -111,7 +113,7 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review eval --type open --json
 # Web 工作台（Flask）：战法管理 / 跑复盘看报告与次日预案 / 问答 / 数据看板（默认仅本机 127.0.0.1:5000；--open 用系统浏览器打开）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review web --open
-# 数据看板：近 10 个交易日 KPI + 趋势图表（单文件 output/{date}_看板.html，无 AI 文案；复盘后预写秒开）
+# 数据看板：近 N 日 KPI + 趋势图表 + 明细面板（Tab：总览/市场结构/涨停明细；单文件自包含，可排序/搜索/筛选/联动下钻；复盘后预写秒开）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806 --open
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard          # 缺省探测最近交易日
@@ -221,6 +223,6 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 - 运行环境固定为 `E:/conda_envs/envs/mowan_dm`；安装依赖只进该环境或本项目文件夹
 - LLM 角色：**自动报告已实现**（DeepSeek，`llm/`）、**数据看板为纯图表（v0.36，无 AI 文案）**、**交互问答已实现**（`kb/`，RAG 知识库 + 6 个数据工具 function-calling；向量路径可选，未装自动降级纯关键词）、**Web 工作台已实现**（`web/`，Flask，默认仅本机 `127.0.0.1:5000`，无认证勿暴露 LAN）
 - 首期模块：情绪温度、连板梯队、题材运行周期与归类、炸板净流入、龙虎榜游资（已实现）
-- 数据看板：近 N 日 KPI + SVG 趋势图 + 趋势摘要/情绪成分表（`output/{date}_看板.html`）；打开即见、复盘预写秒开；无 LLM；历史缺日按缺数据标记照常渲染
+- 数据看板：近 N 日 KPI + SVG 趋势图 + 趋势摘要/情绪成分表 + Tab 三面板（连板梯队/题材板块/涨停个股明细，可排序/搜索/筛选/跨面板联动下钻；`output/{date}_看板.html` 单文件自包含）；打开即见、复盘预写秒开；无 LLM；历史缺日按缺数据标记照常渲染
 - **个人战法**（v0.8 已实现）：两条路径——① tracked 种子示例 `prompts/strategies/`（`strategy.template/example`，只读，禁改/禁删，登记者 `prompts/INDEX.md`）；② **用户 UI 上传**落盘 `data/strategies/`（gitignored `data/*/` 已覆盖，**不入库**），id 自动 `strategy.user-<sha256(name)[:10]>`，驱动 `review --strategy <id>` 与 Web 复盘任务的次日预案（`module.plan` + 战法正文注入）
 - 未来：策略回测 / 更多数据工具 / 登录鉴权（工作台目前仅 localhost 无认证）

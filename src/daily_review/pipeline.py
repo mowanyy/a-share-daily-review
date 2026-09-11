@@ -492,3 +492,145 @@ def compute_dashboard(collected: dict) -> dict:
         "ladder": _dashboard_kpi(collected["zt"], collected["zb"]),
         "timeline_dates": collected.get("timeline_dates", []),
     }
+
+
+# ---------------------------------------------------------------- 看板明细路径（v0.38）
+
+def _load_optional(name: str, trade_date: str, columns: list[str]) -> tuple[pd.DataFrame, bool]:
+    """读盘可选项：有 CSV 返回 (df, True)，否则 (空表, False)；绝不联网、绝不抛。"""
+    try:
+        df = load_csv(name, trade_date)
+        if not df.empty:
+            return _zfill_codes(df), True
+    except Exception:
+        pass
+    return _empty_df(columns), False
+
+
+def collect_dashboard_detail(trade_date: str, *, n_days: int = 10) -> dict:
+    """看板明细读盘路径（v0.38）：prev_zt + height_series + 可选项（moneyflow/lhb）。
+
+    全部读盘、零新增网络：prev_zt / height_series 由历史 zt_pool CSV 重建
+    （有 CSV 才读盘，缺失日走 `_cached` 联网补采，与 collect_dashboard 同约定）；
+    moneyflow_zb / lhb_daily / lhb_seats 有 CSV 才读（缺 → 空表 + ok=False，面板降级）。
+    """
+    now = datetime.now()
+    today = now.strftime("%Y%m%d")
+
+    # 交易日序列（由近及远，今日置首）：prev_zt 取第 2 新，height_series 由各日 max_lb 重建
+    series_dates = em.resolve_recent_trade_dates(trade_date, n_days=n_days)
+    series_dates = [trade_date] + [d for d in series_dates if d != trade_date]
+    series_dates = series_dates[:n_days]
+    prev_date = series_dates[1] if len(series_dates) > 1 else ""
+
+    prev_zt = _empty_df(["trade_date", "code", "lb_num"])
+    prev_zt_ok = False
+    if prev_date:
+        pool = _cached("zt_pool", prev_date, lambda d=prev_date: em.fetch_zt_pool(d),
+                       use_cache=(prev_date != today))
+        if not pool.empty:
+            prev_zt, prev_zt_ok = pool, True
+
+    # 空间板高度序列（最新在前，含今日；与 compute_ladder 约定一致）
+    height_series: list[dict] = []
+    for d in series_dates:
+        pool = _cached("zt_pool", d, lambda d=d: em.fetch_zt_pool(d),
+                       use_cache=(d != today))
+        height_series.append({"date": d, "max_lb": int(pool["lb_num"].max()) if not pool.empty else 0})
+
+    # 可选项：炸板资金流 / 龙虎榜（读盘；缺 → 空表 + ok=False，面板降级，不联网补采）
+    moneyflow, mf_ok = _load_optional(
+        "moneyflow_zb", trade_date,
+        ["trade_date", "code", "name", "main_net_inflow", "super_net_inflow", "big_net_inflow"],
+    )
+    lhb_daily, lhb_ok = _load_optional("lhb_daily", trade_date, eastmoney_lhb.LHB_DAILY_COLUMNS)
+    lhb_seats, _lhb_seats_ok = _load_optional("lhb_seats", trade_date, eastmoney_lhb.LHB_SEAT_COLUMNS)
+
+    return {
+        "trade_date": trade_date,
+        "prev_zt": prev_zt,
+        "prev_zt_ok": prev_zt_ok,
+        "prev_date": prev_date,
+        "height_series": height_series,
+        "moneyflow": moneyflow,
+        "moneyflow_ok": mf_ok,
+        "lhb_daily": lhb_daily,
+        "lhb_seats": lhb_seats,
+        "lhb_ok": lhb_ok,
+    }
+
+
+def compute_dashboard_detail(collected: dict, detail: dict) -> dict:
+    """看板明细指标（v0.38）：连板梯队 + 题材板块 + 涨停明细行 + KPI 汇总。
+
+    复用 compute_ladder / build_themes（读盘数据，零网络）；金额统一转「亿元」。
+    """
+    zt = collected["zt"]
+    zb = collected["zb"]
+    prev_zt = detail["prev_zt"]
+    height_series = detail["height_series"]
+
+    # 题材历史池（旧→新，不含今日）：复用 collect_dashboard 的 hist_days
+    # （历史 CSV 列不齐时补 industry 列，避免 build_themes groupby 崩）
+    prev_pools: list[tuple[str, pd.DataFrame]] = []
+    for h in collected.get("hist_days", []):
+        p = h["zt"]
+        if "industry" not in p.columns:
+            p = p.copy()
+            p["industry"] = ""
+        prev_pools.append((h["date"], p))
+
+    ladder = compute_ladder(zt, zb, prev_zt, height_series)
+    themes = build_themes(zt, prev_pools, None)
+
+    # 涨停明细行（列对齐 zt_pool.csv；封单/成交额转亿元、换手保留 1 位）
+    zt_list: list[dict] = []
+    for _, r in zt.iterrows():
+        zt_list.append({
+            "code": str(r["code"]),
+            "name": str(r["name"]),
+            "lb_num": int(r["lb_num"]),
+            "first_time": "" if pd.isna(r.get("first_limit_time")) else str(r["first_limit_time"]),
+            "open_times": int(r["open_times"]) if not pd.isna(r.get("open_times")) else 0,
+            "seal_amount": None if pd.isna(r.get("seal_amount")) else round(float(r["seal_amount"]) / 1e8, 2),
+            "amount": None if pd.isna(r.get("amount")) else round(float(r["amount"]) / 1e8, 2),
+            "turnover": None if pd.isna(r.get("turnover")) else round(float(r["turnover"]), 1),
+            "industry": str(r.get("industry") or ""),
+        })
+
+    # KPI 汇总（亿元；数据缺失 → None，前端隐藏对应卡片）
+    def _sum_yi(df: pd.DataFrame, col: str) -> float | None:
+        if df is None or df.empty or col not in df.columns:
+            return None
+        try:
+            s = float(df[col].sum())
+        except Exception:
+            return None
+        return round(s / 1e8, 2)
+
+    mf_net = _sum_yi(detail["moneyflow"], "main_net_inflow") if detail["moneyflow_ok"] else None
+    lhb_net = _sum_yi(detail["lhb_daily"], "lhb_net_amt") if detail["lhb_ok"] else None
+    zt_amount = _sum_yi(zt, "amount")
+
+    # 晋级率 KPI：今日连板 / 昨日涨停（prev_zt 缺失 → None，不显示 0 误导）
+    promote_rate = None
+    if detail["prev_zt_ok"] and prev_zt is not None and not prev_zt.empty:
+        base = int(len(prev_zt))
+        if base:
+            promote_rate = round(ladder["lianban_count"] / base, 4)
+
+    return {
+        "trade_date": collected["trade_date"],
+        "ladder": ladder,
+        "themes": themes,
+        "zt_list": zt_list,
+        "mf_net": mf_net,
+        "lhb_net": lhb_net,
+        "zt_amount": zt_amount,
+        "promote_rate": promote_rate,
+        "flags": {
+            "prev_zt_ok": detail["prev_zt_ok"],
+            "moneyflow_ok": detail["moneyflow_ok"],
+            "lhb_ok": detail["lhb_ok"],
+        },
+    }

@@ -705,6 +705,11 @@ class DashboardCache:
                 oldest = min(self._items, key=lambda k: self._items[k][1])
                 del self._items[oldest]
 
+    def invalidate(self, key: tuple) -> None:
+        """按 key 清除缓存项（强制刷新用；磁盘文件保留，复用侧按保鲜规则自动决策）。"""
+        with self._lock:
+            self._items.pop(key, None)
+
 
 # 单飞：同 (date, days) 并发首个请求只生成一次，其余等待缓存命中
 _GENERATION_LOCKS: dict[tuple, threading.Lock] = {}
@@ -749,19 +754,30 @@ def _serve_existing_dashboard_file(trade_date: str, n_days: int) -> str | None:
 
 
 def _generate_dashboard_html(trade_date: str, n_days: int) -> str:
-    """轻量采集→指标→渲染看板 HTML（仅缓存/文件均未命中时调用）。
+    """轻量采集+明细读盘→指标→渲染看板 HTML（仅缓存/文件均未命中时调用）。
 
     默认 10 日窗口成功生成后落盘 output/{date}_看板.html，进程重启后文件复用秒开
     （非默认窗口不落盘，避免覆盖默认命名文件；内容核对在复用侧兜底）。
+    明细面板失败降级为基础看板（v0.38），不阻断主链路。
     """
     from daily_review.config import get_settings
     from daily_review.dashboard import DEFAULT_N_DAYS, _assemble_payload, build_trend, render_html
-    from daily_review.pipeline import collect_dashboard, compute_dashboard
+    from daily_review.pipeline import (
+        collect_dashboard,
+        collect_dashboard_detail,
+        compute_dashboard,
+        compute_dashboard_detail,
+    )
 
     collected = collect_dashboard(trade_date, n_days=n_days)
     indicators = compute_dashboard(collected)
     trend = build_trend(collected, indicators, n_days)
-    payload = _assemble_payload(indicators, trend, collected)
+    try:
+        detail = collect_dashboard_detail(trade_date, n_days=n_days)
+        detail_indicators = compute_dashboard_detail(collected, detail)
+    except Exception:  # noqa: BLE001 —— 明细失败降级基础看板
+        detail_indicators = None
+    payload = _assemble_payload(indicators, trend, collected, detail_indicators)
     html = render_html(payload)
     if n_days == DEFAULT_N_DAYS:
         try:
@@ -805,6 +821,26 @@ def api_dashboard_view():
 
                     html = render_error_html(trade_date, f"{type(exc).__name__}: {exc}")
     return current_app.response_class(html, mimetype="text/html")
+
+
+@api_bp.post("/api/dashboard/refresh")
+def api_dashboard_refresh():
+    """强制刷新看板：清进程内缓存（磁盘文件保留，复用侧按保鲜规则自动决策）。
+
+    前端「重新生成」按钮调用：清缓存后 iframe 重载即重新采集/读盘生成。
+    """
+    body = request.get_json(silent=True) or {}
+    trade_date = str(body.get("date") or "").strip() or _recent_date()
+    if not _DATE_RE.fullmatch(trade_date):
+        return jsonify({"error": "date 需为 YYYYMMDD"}), 400
+    try:
+        n_days = int(body.get("days") or "10")
+    except ValueError:
+        n_days = 10
+    n_days = max(2, min(n_days, 60))
+    cache: DashboardCache = current_app.extensions["dashboard_cache"]
+    cache.invalidate((trade_date, n_days))
+    return jsonify({"ok": True, "date": trade_date, "days": n_days})
 
 
 @api_bp.get("/api/config/llm")

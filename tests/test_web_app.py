@@ -329,6 +329,33 @@ def test_dashboard_cache_evicts_oldest(monkeypatch):
     assert c.get(("20260730", 19), "20260730") == "h19"
 
 
+def test_dashboard_refresh_invalidates_cache(app, monkeypatch):
+    """强制刷新：清进程内缓存后下次请求重新生成（重新采集/读盘）。"""
+    import daily_review.web.routes as routes_mod
+
+    calls = {"n": 0}
+
+    def fake_gen(trade_date, n_days):
+        calls["n"] += 1
+        return f"<html>dash-{calls['n']}</html>"
+
+    monkeypatch.setattr(routes_mod, "_generate_dashboard_html", fake_gen)
+    c = app.test_client()
+    assert "dash-1" in c.get("/api/dashboard/view?date=20260730&days=10").get_data(as_text=True)
+    assert calls["n"] == 1
+    r = c.post("/api/dashboard/refresh", json={"date": "20260730", "days": 10})
+    assert r.status_code == 200 and r.get_json()["ok"] is True
+    assert "dash-2" in c.get("/api/dashboard/view?date=20260730&days=10").get_data(as_text=True)
+    assert calls["n"] == 2
+    # 非默认窗口同样失效
+    assert "dash-3" in c.get("/api/dashboard/view?date=20260730&days=20").get_data(as_text=True)
+
+
+def test_dashboard_refresh_invalid_date(app):
+    r = app.test_client().post("/api/dashboard/refresh", json={"date": "2026-07-30"})
+    assert r.status_code == 400
+
+
 # ---------------------------------------------------------------- 审计日志页面（v0.35）
 
 
