@@ -194,14 +194,14 @@ def test_dashboard_view_cached_second_call_skips_generation(app, monkeypatch):
 
 
 def _dash_file(tmp_path, *, n_days=10, body="<html>file-dash</html>"):
-    """写一个与请求可匹配的 output/{date}_看板.html：含 n_days 标记。"""
+    """写一个与请求可匹配的 output/{date}_看板.html：含 n_days + dash_ver 标记。"""
     from daily_review.config import get_settings
 
     s = get_settings()
     od = tmp_path / "output"
     od.mkdir(exist_ok=True)
     (od / "20260730_看板.html").write_text(
-        f'const DATA = {{ "n_days": {n_days} }}; {body}', encoding="utf-8"
+        f'const DATA = {{ "n_days": {n_days}, "dash_ver": 2 }}; {body}', encoding="utf-8"
     )
     return od
 
@@ -241,12 +241,15 @@ def test_dashboard_view_file_reuse_only_default_days(app, monkeypatch, tmp_path)
 
 
 def test_file_matches_request():
-    """文件内容核对：仅核 n_days。"""
+    """文件内容核对：n_days 匹配 + 结构版本（dash_ver）>= 2；旧版文件不复用。"""
     import daily_review.web.routes as routes_mod
 
-    ok = 'const DATA = { "n_days": 10 }; <html>ok</html>'
+    ok = 'const DATA = { "n_days": 10, "dash_ver": 2 }; <html>ok</html>'
     assert routes_mod._file_matches_request(ok, "20260730", 10)
     assert not routes_mod._file_matches_request(ok, "20260730", 20)
+    # 旧版文件（无 dash_ver 标记）即使 n_days 匹配也不复用 → 触发重新生成新版
+    old = 'const DATA = { "n_days": 10 }; <html>old</html>'
+    assert not routes_mod._file_matches_request(old, "20260730", 10)
     assert not routes_mod._file_matches_request("<html>无标记</html>", "20260730", 10)
 
 
@@ -354,6 +357,50 @@ def test_dashboard_refresh_invalidates_cache(app, monkeypatch):
 def test_dashboard_refresh_invalid_date(app):
     r = app.test_client().post("/api/dashboard/refresh", json={"date": "2026-07-30"})
     assert r.status_code == 400
+
+
+def test_recent_date_time_aware(monkeypatch):
+    """_recent_date 时间感知：今日开盘前/无涨停数据 → 回退前一交易日；有数据 → 今日。"""
+    import daily_review.web.routes as routes_mod
+    from daily_review.data import eastmoney_pool
+
+    # 场景 A：今日是交易日但无 zt 数据（开盘前）→ 前一交易日
+    monkeypatch.setattr(
+        eastmoney_pool, "resolve_recent_trade_dates",
+        lambda today, n_days=1: (["20260911", "20260910"] if n_days > 1 else ["20260911"]),
+    )
+    monkeypatch.setattr(routes_mod, "_has_zt_data", lambda d: False)
+    assert routes_mod._recent_date() == "20260910"
+
+    # 场景 B：今日已有涨停数据（已收盘）→ 今日
+    monkeypatch.setattr(routes_mod, "_has_zt_data", lambda d: True)
+    assert routes_mod._recent_date() == "20260911"
+
+    # 场景 C：今日非交易日（resolve 只给最近交易日）→ 该最近交易日
+    monkeypatch.setattr(eastmoney_pool, "resolve_recent_trade_dates", lambda today, n_days=1: ["20260910"])
+    assert routes_mod._recent_date() == "20260910"
+
+    # 场景 D：完全无法判定 → 退化为 today
+    monkeypatch.setattr(eastmoney_pool, "resolve_recent_trade_dates", lambda today, n_days=1: [])
+    assert routes_mod._recent_date() == "20260911"
+
+
+def test_dashboard_dates_api(app, monkeypatch):
+    """/api/dashboard/dates：返回最近交易日列表 + 时间感知默认日期。"""
+    import daily_review.web.routes as routes_mod
+    from daily_review.data import eastmoney_pool
+
+    monkeypatch.setattr(
+        eastmoney_pool, "resolve_recent_trade_dates",
+        lambda today, n_days=1: ["20260911", "20260910", "20260909"][:n_days],
+    )
+    monkeypatch.setattr(routes_mod, "_has_zt_data", lambda d: False)
+    r = app.test_client().get("/api/dashboard/dates")
+    assert r.status_code == 200
+    data = r.get_json()
+    assert data["dates"] == ["20260911", "20260910", "20260909"]
+    assert data["default"] == "20260910"  # 今日开盘前 → 前一交易日
+    assert data["today"] == "20260911"
 
 
 # ---------------------------------------------------------------- 审计日志页面（v0.35）

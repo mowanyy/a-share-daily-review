@@ -262,7 +262,7 @@ class TestRenderHtml:
         assert "overflow-x: auto" in html_text
 
     def test_dashboard_template_iframe_resize(self):
-        """web 端 iframe 高度自适应：窗口缩放后重新测高。"""
+        """web 端 iframe 高度自适应：窗口缩放后重新测高；日期下拉（v0.38.1）时间感知默认。"""
         import pathlib
         tpl = (pathlib.Path(__file__).resolve().parents[1]
                / "src" / "daily_review" / "web" / "templates" / "dashboard.html")
@@ -271,6 +271,12 @@ class TestRenderHtml:
         assert "btnDash" not in text
         assert "dLlm" not in text
         assert "loadDash()" in text
+        # v0.38.1：日期由文本框改下拉，首屏经 /api/dashboard/dates 填充并时间感知默认
+        assert '<select id="dDate"' in text
+        assert "fillDates" in text
+        assert "ensureDateOption" in text
+        assert "api('/api/dashboard/dates')" in text
+        assert "/api/review/recent_date" not in text
 
 
 class TestGenerate:

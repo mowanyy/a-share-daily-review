@@ -54,13 +54,30 @@ def _too_many(endpoint: str):
     return None
 
 
+def _has_zt_data(trade_date: str) -> bool:
+    """该日是否已有涨停数据（读盘 data/{date}/zt_pool.csv 非空，零网络）。"""
+    try:
+        from daily_review.data.repo import load_csv
+
+        return not load_csv("zt_pool", trade_date).empty
+    except Exception:
+        return False
+
+
 def _recent_date() -> str:
-    """缺省交易日：探测最近有涨停数据的交易日（空则退化为今天）。"""
+    """缺省交易日（时间感知 v0.38.1）：今日已采集涨停数据 → 今日；
+    今日开盘前/未采集/休市 → 回退最近有数据的交易日（空则退化为今天）。"""
     from daily_review.data import eastmoney_pool
 
     today = datetime.today().strftime("%Y%m%d")
     dates = eastmoney_pool.resolve_recent_trade_dates(today, n_days=1)
-    return dates[0] if dates else today
+    if not dates:
+        return today
+    # 今日是交易日但尚无涨停数据（开盘前/盘中未采集/采集失败）→ 回退前一交易日
+    if dates[0] == today and not _has_zt_data(today):
+        prev = eastmoney_pool.resolve_recent_trade_dates(today, n_days=2)
+        return prev[1] if len(prev) > 1 else today
+    return dates[0]
 
 
 # ---------------------------------------------------------------- 页面
@@ -726,10 +743,19 @@ def _generation_lock(key: tuple) -> threading.Lock:
 
 
 def _file_matches_request(text: str, trade_date: str, n_days: int) -> bool:
-    """看板文件内容核对：文件名不编码 n_days，复用前从 `const DATA` 核对窗口天数。"""
-    del trade_date  # 文件名已按日期定位；此处仅核 n_days
+    """看板文件内容核对：文件名不编码 n_days/版本，复用前从 `const DATA` 核对窗口天数与结构版本。
+
+    v0.38.1：旧版看板文件（无 `dash_ver` 或版本 < DASH_VER，即 v0.37 及更早的单文件结构）
+    即使 n_days 匹配也不复用 → 触发重新生成新版（历史日期全读盘，秒级）。
+    """
+    del trade_date  # 文件名已按日期定位；此处仅核 n_days + 版本
+    from daily_review.dashboard import DASH_VER
+
     m = re.search(r'"n_days":\s*(\d+)', text)
-    return bool(m) and int(m.group(1)) == n_days
+    if not (m and int(m.group(1)) == n_days):
+        return False
+    v = re.search(r'"dash_ver":\s*(\d+)', text)
+    return bool(v) and int(v.group(1)) >= DASH_VER
 
 
 def _serve_existing_dashboard_file(trade_date: str, n_days: int) -> str | None:
@@ -787,6 +813,21 @@ def _generate_dashboard_html(trade_date: str, n_days: int) -> str:
         except OSError:
             pass
     return html
+
+
+@api_bp.get("/api/dashboard/dates")
+def api_dashboard_dates():
+    """看板日期下拉数据：最近 N 个交易日（由近及远）+ 时间感知默认日期（v0.38.1）。"""
+    try:
+        n_days = int(request.args.get("days", "20") or "20")
+    except ValueError:
+        n_days = 20
+    n_days = max(2, min(n_days, 60))
+    from daily_review.data import eastmoney_pool
+
+    today = datetime.today().strftime("%Y%m%d")
+    dates = eastmoney_pool.resolve_recent_trade_dates(today, n_days=n_days)
+    return jsonify({"dates": dates, "default": _recent_date(), "today": today})
 
 
 @api_bp.get("/api/dashboard/view")

@@ -4,11 +4,11 @@
 <h1>数据看板</h1>
 <div class="panel">
   <div class="row">
-    <div><label>交易日</label><input type="text" id="dDate" placeholder="YYYYMMDD"></div>
+    <div><label>交易日</label><select id="dDate" style="min-width:150px"><option value="">加载中…</option></select></div>
     <div><label>近 N 个交易日</label><input type="text" id="dDays" value="10"></div>
     <div style="align-self:flex-end"><button type="button" id="dashRefresh">重新生成</button></div>
   </div>
-  <div class="muted">打开即加载 KPI + 趋势图表 + 摘要表 + 明细面板（连板梯队/题材/涨停个股）。有缓存/复盘预写时秒开；轻量采集（仅涨跌停池）冷启动约数十秒。「重新生成」清缓存强制重拉。</div>
+  <div class="muted">默认加载今日（开盘前/未采集时自动回退前一交易日）。打开即加载 KPI + 趋势图表 + 摘要表 + 明细面板（连板梯队/题材/涨停个股）。有缓存/复盘预写时秒开；轻量采集（仅涨跌停池）冷启动约数十秒。「重新生成」清缓存强制重拉。</div>
   <div id="dashLoading" class="muted" style="margin-top:8px;color:var(--accent)">
     加载行情数据…（有缓存时秒开）
   </div>
@@ -28,6 +28,32 @@ function frameSrc(){
   var q = 'days=' + encodeURIComponent(days);
   if(date){ q += '&date=' + encodeURIComponent(date); }
   return '/api/dashboard/view?' + q;
+}
+/* 日期下拉：最近交易日列表（由近及远）+ 时间感知默认（今日开盘前回退前一交易日） */
+function weekdayCn(y, m, d){
+  return ['日','一','二','三','四','五','六'][new Date(y, m - 1, d).getDay()];
+}
+function fillDates(dates, selected){
+  var sel = document.getElementById('dDate');
+  if(!dates || !dates.length){ return; }
+  sel.innerHTML = dates.map(function(ds){
+    var y = ds.slice(0, 4), mo = ds.slice(4, 6), dd = ds.slice(6);
+    return '<option value="' + ds + '">' + y + '-' + mo + '-' + dd
+      + '（周' + weekdayCn(+y, +mo, +dd) + '）</option>';
+  }).join('');
+  if(selected && dates.indexOf(selected) >= 0){ sel.value = selected; }
+}
+function ensureDateOption(date){
+  var sel = document.getElementById('dDate');
+  var exists = Array.prototype.some.call(sel.options, function(o){ return o.value === date; });
+  if(!exists){
+    var y = date.slice(0, 4), mo = date.slice(4, 6), dd = date.slice(6);
+    var o = document.createElement('option');
+    o.value = date;
+    o.textContent = y + '-' + mo + '-' + dd + '（周' + weekdayCn(+y, +mo, +dd) + '）';
+    sel.insertBefore(o, sel.firstChild);
+  }
+  sel.value = date;
 }
 /* 看板与页面融为一体：同源 iframe 测量内容高度，随内容自动撑高，消除内部双滚动条。 */
 function fitFrame(){
@@ -51,8 +77,14 @@ function scheduleLoad(){
   if(loadTimer){ clearTimeout(loadTimer); }
   loadTimer = setTimeout(function(){ loadDash(); }, 400);
 }
-document.getElementById('dDate').addEventListener('input', scheduleLoad);
+document.getElementById('dDate').addEventListener('change', loadDash);
 document.getElementById('dDays').addEventListener('input', scheduleLoad);
+/* 首屏：填充最近交易日下拉；URL ?date= 优先选中该日（不在列表则插入）；默认时间感知（今日开盘前→前一交易日） */
+var preDate = (location.search.match(/[?&]date=(\d{8})/) || [])[1] || '';
+api('/api/dashboard/dates').then(function(d){
+  fillDates(d.dates, d.default || d.dates[0]);
+  if(preDate){ ensureDateOption(preDate); }
+}).catch(function(){}).finally(function(){ loadDash(); });
 /* 强制刷新：清进程内缓存后重载 iframe（重新采集/读盘生成） */
 document.getElementById('dashRefresh').addEventListener('click', function(){
   loading.style.display = '';
@@ -63,18 +95,8 @@ document.getElementById('dashRefresh').addEventListener('click', function(){
       date: document.getElementById('dDate').value.trim() || null,
       days: document.getElementById('dDays').value.trim() || '10'
     })
-  }).then(function(r){ return r.json(); }).catch(function(){ return {}; })
+    }).then(function(r){ return r.json(); }).catch(function(){ return {}; })
     .then(function(){ loadDash(); });
 });
-/* 首屏：优先 ?date= 预填，否则回填最近交易日，就绪后自动加载 */
-var preDate = (location.search.match(/[?&]date=(\d{8})/) || [])[1] || '';
-if(preDate){
-  document.getElementById('dDate').value = preDate;
-  loadDash();
-}else{
-  api('/api/review/recent_date').then(function(d){
-    document.getElementById('dDate').value = d.date;
-  }).catch(function(){}).finally(function(){ loadDash(); });
-}
 </script>
 {% endblock %}

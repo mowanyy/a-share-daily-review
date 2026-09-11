@@ -19,6 +19,8 @@ from daily_review.config import get_settings
 from daily_review.llm.reporter import _compact_json, _weekday_cn
 
 DEFAULT_N_DAYS = 10
+# 看板单文件结构版本（v0.38 明细面板起 = 2）：Web 文件复用时核对，旧版文件触发重新生成
+DASH_VER = 2
 
 
 # ---------------------------------------------------------------- 多日趋势行（纯函数）
@@ -114,6 +116,7 @@ def _assemble_payload(indicators: dict, trend: list[dict], collected: dict,
         "trade_date": trade_date,
         "weekday": _weekday_cn(trade_date),
         "n_days": len(trend),
+        "dash_ver": DASH_VER,
         "trend": trend,
         "kpi": {
             "emotion_score": emo.get("score"),
