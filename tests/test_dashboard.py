@@ -277,6 +277,10 @@ class TestRenderHtml:
         assert "ensureDateOption" in text
         assert "api('/api/dashboard/dates')" in text
         assert "/api/review/recent_date" not in text
+        # v0.38.2：天数 N 也改快捷下拉（7/10/20/30），select 用 change 直接刷新
+        assert '<select id="dDays"' in text
+        assert "scheduleLoad" not in text
+        assert "addEventListener('change', loadDash)" in text
 
 
 class TestGenerate:

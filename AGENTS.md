@@ -9,6 +9,8 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 
 ## 当前阶段（重要）
 
+`v0.38.2`：**历史数据批量补采 + 看板全面预生成（快速打开）**。新增 `tools/backfill_dashboards.py` 批量工具（`--days N`/`--dates` 批量补采 + 预生成新版看板；`--clean-junk` 清理非交易日污染目录，`_has_zt` 校验关键列防坏文件误判）。① **批量预生成**：最近 60 个交易日看板全部生成新版（带 `dash_ver` 标记，`_file_matches_request` 全部匹配），打开任意日期秒开；7/22~9/11 约 28 个交易日涨停数据完整，6/8~7/21 东财涨停池接口无历史数据（看板「数据不足」空态，数据源限制，尽力而为）。② **数据质量修复**：20260806 坏数据（1 行假数据缺 lb_num 列）删除并重采，连带修复 8/7~8/19 十个日期看板生成失败（时间线读坏池子 KeyError）；9/11 数据目录误删恢复（清理逻辑 `is_trade_date` 返回 None=表外未来日期被误判休市，已修为**仅删明确 False 休市日**）。③ **Web 天数 N 改快捷下拉**（7/10/20/30，select change 直刷，移除防抖）。**622 测试通过**。
+
 `v0.38.1`：**看板使用修复（客服反馈）——历史日期旧版文件失效重生成 + 日期下拉选择器 + 时间感知默认日期**。① **历史日期打开旧版看板（无多面板）**：根因——`_file_matches_request` 只核对 `n_days`、`_dashboard_cache_is_fresh` 对历史日期永远新鲜 → 9/9、9/10 等旧版单文件（v0.37 结构、无 Tab 面板）被直接复用；修复——`dashboard.py` 增 `DASH_VER=2` 版本常量并注入 payload（`"dash_ver"`），`_file_matches_request` 增 `dash_ver >= DASH_VER` 校验，旧版文件不复用 → 自动走生成链路重写新版（历史日期全读盘、秒级）。② **日期选择体验**：`/dashboard` 页 `#dDate` 文本框改**下拉选择器**——新增 `GET /api/dashboard/dates?days=20`（返回最近交易日列表 + 默认日期，option 显示 `YYYY-MM-DD（周X）`）；`_recent_date()` 时间感知——今日是交易日但 `data/{today}/zt_pool.csv` 无数据（开盘前/未采集/采集失败）→ 回退前一交易日，今日已有数据（含盘中）→ 今日；连带 review 页等其它消费方默认日期同步受益。新增 2 例测试（时间感知默认回退/dates API）+ `_file_matches_request` 与模板断言更新。**622 测试通过**。
 
 `v0.38.0`：**数据看板内容全面性 + 可交互性（客服视角）——Tab 三面板 + 明细面板 + 前端交互，620 测试通过**。按 `docs/数据看板完善方案.md` 一期落地（单文件内增强，保持零外链自包含、可独立分享）：① **内容**：Tab 三面板——总览（KPI 6→12 张，新增首板家数/晋级率/最高板位置/炸板净流出/龙虎榜净买/涨停总成交额，缺失自动隐藏）/ 市场结构（连板梯队表：板数×家数×代表股×晋级率；题材板块表：题材×家数×最高板×阶段×领涨股×主线标记 +「仅看主线」开关）/ 涨停明细（当日全部涨停股：代码/名称/连板/首封/开板次数/封单额/成交额/换手/行业，50/页分页）。② **交互（纯内联 JS）**：Tab 切换（sessionStorage 记忆）、表头点击排序、代码/名称搜索防抖、行业与连板数筛选、跨面板联动下钻（点 KPI/梯队板数/题材行 → 跳 Tab 自动过滤）、图表悬浮 tooltip 浮层、移动端适配。③ **数据零新增采集**：新增 `pipeline.collect_dashboard_detail`/`compute_dashboard_detail`——prev_zt/height_series 由历史 zt_pool CSV 重建，moneyflow/lhb 读盘可选项（缺 → 面板降级/卡片隐藏，不联网）；复用 `compute_ladder`/`build_themes`。④ **Web 适配**：`/api/dashboard/view` 生成链路走明细路径（失败降级基础看板）；新增 `POST /api/dashboard/refresh` 强制刷新 + `/dashboard` 页「重新生成」按钮（清进程内缓存）。⑤ **测试**：test_dashboard.py 面板断言翻转（旧「无明细」→ 新「面板存在」）+ 新增 8 例（detail 组装/晋级率口径/缺失降级/读盘重建/生成降级/refresh API）。**620 测试通过**。
@@ -121,6 +123,10 @@ A 股**超短连板**收盘复盘系统：采集东方财富行情 → 结构化
 # Web 工作台（Flask）：战法管理 / 跑复盘（含隔夜预案/开盘策略按钮）/ 问答 / 数据看板（默认仅本机 127.0.0.1:5000；--open 用系统浏览器打开）
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review web --open
 # 数据看板：近 N 日 KPI + 趋势图表 + 明细面板（Tab：总览/市场结构/涨停明细；单文件自包含，可排序/搜索/筛选/联动下钻；复盘后预写秒开）
+# 历史数据批量补采 + 看板批量预生成（v0.38.2）：最近 60 交易日看板秒开；--clean-junk 清非交易日污染
+"E:/conda_envs/envs/mowan_dm/python.exe" -u -m tools.backfill_dashboards --days 60 --skip-data   # 批量生成看板（缺 zt 自动联网补）
+"E:/conda_envs/envs/mowan_dm/python.exe" -u -m tools.backfill_dashboards --dates 20260819,20260818   # 指定日期
+"E:/conda_envs/envs/mowan_dm/python.exe" -u -m tools.backfill_dashboards --clean-junk
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard --date 20260806 --open
 "E:/conda_envs/envs/mowan_dm/python.exe" -m daily_review dashboard          # 缺省探测最近交易日

@@ -21,12 +21,13 @@ version: 0.1.0
 
 @pytest.fixture
 def app(tmp_path, monkeypatch):
-    """注入 tmp 目录为 data/prompts 根（含一个 tracked 战法），新建独立 Flask app。"""
+    """注入 tmp 目录为 data/prompts/output 根（含一个 tracked 战法），新建独立 Flask app。"""
     from daily_review.config import get_settings
 
     s = get_settings()
     monkeypatch.setattr(s, "data_dir", tmp_path / "data")
     monkeypatch.setattr(s, "prompts_dir", tmp_path / "prompts")
+    monkeypatch.setattr(s, "output_dir", tmp_path / "output")
     tdir = tmp_path / "prompts" / "strategies"
     tdir.mkdir(parents=True, exist_ok=True)
     (tdir / "战法模板.md").write_text(TRACKED_MD, encoding="utf-8")
