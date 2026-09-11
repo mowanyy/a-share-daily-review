@@ -2,16 +2,53 @@
 {% block title %}数据看板 · 每日复盘{% endblock %}
 {% block content %}
 <h1>数据看板</h1>
+<style>
+.cal-wrap { position: relative; display: inline-block; }
+.cal-panel { position: absolute; left: 0; top: calc(100% + 4px); z-index: 30;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px; width: 252px; box-shadow: 0 4px 16px rgba(0,0,0,.35); }
+.cal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.cal-head span { font-size: 13px; font-weight: 600; }
+.btn-mini { background: none; border: 1px solid var(--border); color: var(--ink-2);
+  border-radius: 5px; min-width: 26px; padding: 2px 8px; cursor: pointer; }
+.btn-mini:hover { color: var(--ink); border-color: var(--chip); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
+  text-align: center; font-size: 12px; }
+.cal-dow { color: var(--ink-3); padding: 3px 0; }
+.cal-day { padding: 4px 0; border-radius: 5px; cursor: pointer; }
+.cal-day:hover { background: rgba(31,111,235,.14); }
+.cal-day.sel { background: rgba(31,111,235,.32); font-weight: 700; }
+.cal-day.no-data { opacity: .4; }
+.cal-day.disabled { opacity: .18; cursor: default; }
+.cal-day.disabled:hover { background: none; }
+.cal-day.today { outline: 1px solid var(--chip); }
+.cal-foot { font-size: 11px; color: var(--ink-3); margin-top: 6px; }
+</style>
 <div class="panel">
   <div class="row">
-    <div><label>交易日</label><select id="dDate" style="min-width:150px"><option value="">加载中…</option></select></div>
+    <div>
+      <label>交易日</label>
+      <div class="cal-wrap">
+        <input type="hidden" id="dDate" value="">
+        <button type="button" id="dDateBtn" class="btn" style="min-width:170px">选择日期</button>
+        <div id="calPanel" class="cal-panel" hidden>
+          <div class="cal-head">
+            <button type="button" id="calPrev" class="btn-mini">‹</button>
+            <span id="calTitle">…</span>
+            <button type="button" id="calNext" class="btn-mini">›</button>
+          </div>
+          <div class="cal-grid" id="calGrid"></div>
+          <div class="cal-foot muted">半透明 = 该交易日暂无涨停数据</div>
+        </div>
+      </div>
+    </div>
     <div><label>近 N 个交易日</label><select id="dDays">
       <option value="7">7 日</option><option value="10" selected>10 日</option>
       <option value="20">20 日</option><option value="30">30 日</option>
     </select></div>
     <div style="align-self:flex-end"><button type="button" id="dashRefresh">重新生成</button></div>
   </div>
-  <div class="muted">默认加载今日（开盘前/未采集时自动回退前一交易日）。打开即加载 KPI + 趋势图表 + 摘要表 + 明细面板（连板梯队/题材/涨停个股）。有缓存/复盘预写时秒开；轻量采集（仅涨跌停池）冷启动约数十秒。「重新生成」清缓存强制重拉。</div>
+  <div class="muted">默认加载今日（开盘前/未采集时自动回退前一交易日）。点日历选日期；打开即加载 KPI + 趋势图表 + 摘要表 + 明细面板（连板梯队/题材/涨停个股）。有缓存/复盘预写时秒开；轻量采集（仅涨跌停池）冷启动约数十秒。「重新生成」清缓存强制重拉。</div>
   <div id="dashLoading" class="muted" style="margin-top:8px;color:var(--accent)">
     加载行情数据…（有缓存时秒开）
   </div>
@@ -23,6 +60,9 @@
 <script>
 var frame = document.getElementById('frame');
 var loading = document.getElementById('dashLoading');
+var curDate = '';    /* 选中日期 YYYYMMDD */
+var calMonth = '';   /* 日历当前显示月 YYYYMM */
+var calCache = {};   /* month -> days[] */
 
 function frameSrc(){
   var date = document.getElementById('dDate').value.trim();
@@ -31,31 +71,84 @@ function frameSrc(){
   if(date){ q += '&date=' + encodeURIComponent(date); }
   return '/api/dashboard/view?' + q;
 }
-/* 日期下拉：最近交易日列表（由近及远）+ 时间感知默认（今日开盘前回退前一交易日） */
-function weekdayCn(y, m, d){
-  return ['日','一','二','三','四','五','六'][new Date(y, m - 1, d).getDay()];
+/* 日历：月份网格 + 交易日/数据状态（无数据半透明） */
+function weekdayCn(y, m, d){ return ['日','一','二','三','四','五','六'][new Date(y, m - 1, d).getDay()]; }
+function fmtDateCN(date){
+  if(!date){ return '选择日期'; }
+  var y = date.slice(0, 4), mo = date.slice(4, 6), dd = date.slice(6);
+  return y + '-' + mo + '-' + dd + '（周' + weekdayCn(+y, +mo, +dd) + '）';
 }
-function fillDates(dates, selected){
-  var sel = document.getElementById('dDate');
-  if(!dates || !dates.length){ return; }
-  sel.innerHTML = dates.map(function(ds){
-    var y = ds.slice(0, 4), mo = ds.slice(4, 6), dd = ds.slice(6);
-    return '<option value="' + ds + '">' + y + '-' + mo + '-' + dd
-      + '（周' + weekdayCn(+y, +mo, +dd) + '）</option>';
-  }).join('');
-  if(selected && dates.indexOf(selected) >= 0){ sel.value = selected; }
+function setDate(date){
+  curDate = date;
+  document.getElementById('dDate').value = date;
+  document.getElementById('dDateBtn').textContent = fmtDateCN(date);
+  if(!document.getElementById('calPanel').hidden){ highlightCal(); }
 }
-function ensureDateOption(date){
-  var sel = document.getElementById('dDate');
-  var exists = Array.prototype.some.call(sel.options, function(o){ return o.value === date; });
-  if(!exists){
-    var y = date.slice(0, 4), mo = date.slice(4, 6), dd = date.slice(6);
-    var o = document.createElement('option');
-    o.value = date;
-    o.textContent = y + '-' + mo + '-' + dd + '（周' + weekdayCn(+y, +mo, +dd) + '）';
-    sel.insertBefore(o, sel.firstChild);
+function toggleCal(){
+  var panel = document.getElementById('calPanel');
+  panel.hidden = !panel.hidden;
+  if(!panel.hidden){
+    if(!calMonth){
+      var n = new Date();
+      calMonth = curDate ? curDate.slice(0, 6)
+        : (n.getFullYear() + (n.getMonth() < 9 ? '0' : '') + (n.getMonth() + 1));
+    }
+    renderCal();
   }
-  sel.value = date;
+}
+function renderCal(){
+  document.getElementById('calTitle').textContent =
+    calMonth.slice(0, 4) + ' 年 ' + (+calMonth.slice(4)) + ' 月';
+  var days = calCache[calMonth];
+  if(!days){
+    api('/api/dashboard/calendar?month=' + calMonth).then(function(d){
+      calCache[calMonth] = d.days;
+      paintCal(d.days);
+    }).catch(function(){
+      document.getElementById('calGrid').innerHTML = '<div class="muted">日历加载失败</div>';
+    });
+    return;
+  }
+  paintCal(days);
+}
+function paintCal(days){
+  var grid = document.getElementById('calGrid');
+  var firstDow = new Date(+calMonth.slice(0, 4), +calMonth.slice(4) - 1, 1).getDay();
+  var n = new Date();
+  var todayStr = n.getFullYear() * 10000 + (n.getMonth() + 1) * 100 + n.getDate() + '';
+  var html = ['日','一','二','三','四','五','六'].map(function(w){
+    return '<div class="cal-dow">' + w + '</div>'; }).join('');
+  for(var i = 0; i < firstDow; i++){ html += '<div></div>'; }
+  days.forEach(function(day){
+    var cls = 'cal-day';
+    if(!day.is_trade){ cls += ' disabled'; }
+    else if(!day.has_data){ cls += ' no-data'; }
+    if(day.date === todayStr){ cls += ' today'; }
+    if(day.date === curDate){ cls += ' sel'; }
+    html += '<div class="' + cls + '" data-date="' + day.date + '" data-trade="' + day.is_trade + '">'
+      + day.day + '</div>';
+  });
+  grid.innerHTML = html;
+  grid.querySelectorAll('.cal-day').forEach(function(el){
+    if(el.dataset.trade !== 'true'){ return; }
+    el.addEventListener('click', function(){
+      setDate(el.dataset.date);
+      loadDash();
+      document.getElementById('calPanel').hidden = true;
+    });
+  });
+}
+function highlightCal(){
+  document.getElementById('calGrid').querySelectorAll('.cal-day').forEach(function(el){
+    el.classList.toggle('sel', el.dataset.date === curDate);
+  });
+}
+function shiftCal(delta){
+  var y = +calMonth.slice(0, 4), m = +calMonth.slice(4) + delta;
+  if(m < 1){ m = 12; y--; }
+  if(m > 12){ m = 1; y++; }
+  calMonth = y + (m < 10 ? '0' : '') + m;
+  renderCal();
 }
 /* 看板与页面融为一体：同源 iframe 测量内容高度，随内容自动撑高，消除内部双滚动条。 */
 function fitFrame(){
@@ -75,14 +168,18 @@ frame.onload = function(){
   setTimeout(fitFrame, 300);
   setTimeout(fitFrame, 800);
 };
-document.getElementById('dDate').addEventListener('change', loadDash);
+document.getElementById('dDateBtn').addEventListener('click', function(e){
+  e.stopPropagation();
+  toggleCal();
+});
+document.getElementById('calPrev').addEventListener('click', function(){ shiftCal(-1); });
+document.getElementById('calNext').addEventListener('click', function(){ shiftCal(1); });
+document.addEventListener('click', function(e){
+  var panel = document.getElementById('calPanel');
+  if(panel.hidden){ return; }
+  if(!panel.contains(e.target)){ panel.hidden = true; }
+});
 document.getElementById('dDays').addEventListener('change', loadDash);
-/* 首屏：填充最近交易日下拉；URL ?date= 优先选中该日（不在列表则插入）；默认时间感知（今日开盘前→前一交易日） */
-var preDate = (location.search.match(/[?&]date=(\d{8})/) || [])[1] || '';
-api('/api/dashboard/dates').then(function(d){
-  fillDates(d.dates, d.default || d.dates[0]);
-  if(preDate){ ensureDateOption(preDate); }
-}).catch(function(){}).finally(function(){ loadDash(); });
 /* 强制刷新：清进程内缓存后重载 iframe（重新采集/读盘生成） */
 document.getElementById('dashRefresh').addEventListener('click', function(){
   loading.style.display = '';
@@ -93,8 +190,13 @@ document.getElementById('dashRefresh').addEventListener('click', function(){
       date: document.getElementById('dDate').value.trim() || null,
       days: document.getElementById('dDays').value.trim() || '10'
     })
-    }).then(function(r){ return r.json(); }).catch(function(){ return {}; })
+  }).then(function(r){ return r.json(); }).catch(function(){ return {}; })
     .then(function(){ loadDash(); });
 });
+/* 首屏：时间感知默认（今日开盘前→前一交易日），URL ?date= 优先 */
+var preDate = (location.search.match(/[?&]date=(\d{8})/) || [])[1] || '';
+api('/api/dashboard/dates').then(function(d){
+  setDate(preDate || d.default || d.dates[0] || '');
+}).catch(function(){}).finally(function(){ loadDash(); });
 </script>
 {% endblock %}

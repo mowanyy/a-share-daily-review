@@ -815,6 +815,37 @@ def _generate_dashboard_html(trade_date: str, n_days: int) -> str:
     return html
 
 
+def _is_trade_day(date: str, weekday: int) -> bool:
+    """日期是否交易日：表内按表；表外（None，日历未覆盖如当日/未来）按周一~周五假定。"""
+    from daily_review.data.trade_calendar import is_trade_date
+
+    t = is_trade_date(date)
+    if t is True:
+        return True
+    if t is False:
+        return False
+    return weekday < 5  # 表外：周末休市，工作日假定交易日
+
+
+@api_bp.get("/api/dashboard/calendar")
+def api_dashboard_calendar():
+    """看板日历数据（v0.38.3）：某月每天交易日/数据状态（无数据日期前端半透明）。"""
+    month = request.args.get("month", "").strip()
+    if not re.fullmatch(r"\d{6}", month):
+        return jsonify({"error": "month 需为 YYYYMM"}), 400
+    import calendar as _cal
+
+    y, m = int(month[:4]), int(month[4:])
+    days: list[dict] = []
+    for d in range(1, _cal.monthrange(y, m)[1] + 1):
+        date = f"{month}{d:02d}"
+        weekday = datetime.strptime(date, "%Y%m%d").weekday()
+        is_trade = _is_trade_day(date, weekday)
+        has_data = _has_zt_data(date) if is_trade else False
+        days.append({"date": date, "day": d, "is_trade": is_trade, "has_data": has_data})
+    return jsonify({"month": month, "days": days})
+
+
 @api_bp.get("/api/dashboard/dates")
 def api_dashboard_dates():
     """看板日期下拉数据：最近 N 个交易日（由近及远）+ 时间感知默认日期（v0.38.1）。"""

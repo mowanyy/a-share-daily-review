@@ -404,6 +404,30 @@ def test_dashboard_dates_api(app, monkeypatch):
     assert data["today"] == "20260911"
 
 
+def test_dashboard_calendar_api(app, monkeypatch):
+    """日历 API：某月每天交易日/数据状态（无数据日期 has_data=False → 前端半透明）。
+
+    不依赖真实交易日表（test_calendar 的 mock 会污染 _TABLE 模块缓存）——直接 mock _is_trade_day。
+    """
+    import daily_review.web.routes as routes_mod
+
+    trade_days = {"20260803", "20260806", "20260807", "20260810", "20260811", "20260831"}
+    monkeypatch.setattr(routes_mod, "_is_trade_day",
+                        lambda date, weekday: date in trade_days)
+    monkeypatch.setattr(routes_mod, "_has_zt_data", lambda d: d in ("20260807", "20260810"))
+    r = app.test_client().get("/api/dashboard/calendar?month=202608")
+    assert r.status_code == 200
+    days = r.get_json()["days"]
+    assert len(days) == 31
+    by_date = {d["date"]: d for d in days}
+    assert by_date["20260801"]["is_trade"] is False      # 非交易日（mock 不在集合）
+    assert by_date["20260806"]["is_trade"] is True       # 交易日
+    assert by_date["20260806"]["has_data"] is False      # 无数据 → 半透明
+    assert by_date["20260807"]["has_data"] is True
+    assert app.test_client().get("/api/dashboard/calendar?month=2026-08").status_code == 400
+    assert app.test_client().get("/api/dashboard/calendar").status_code == 400
+
+
 # ---------------------------------------------------------------- 审计日志页面（v0.35）
 
 
