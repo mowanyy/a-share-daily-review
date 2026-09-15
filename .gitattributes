@@ -1,0 +1,6 @@
+# 行尾规范化：文本统一 LF 入库（Windows 检出时按需转换）
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
