@@ -362,8 +362,19 @@ def test_dashboard_refresh_invalid_date(app):
 
 def test_recent_date_time_aware(monkeypatch):
     """_recent_date 时间感知：今日开盘前/无涨停数据 → 回退前一交易日；有数据 → 今日。"""
+    import datetime as dt
+
     import daily_review.web.routes as routes_mod
     from daily_review.data import eastmoney_pool
+
+    # v0.38.7: 固定"今天"为 mock 基准日 20260911——原测试隐式依赖写测试当天的
+    # 真实日期（today==20260911 时回退分支才命中），日期一过即 flaky。
+    class _FixedToday(dt.datetime):
+        @classmethod
+        def today(cls):
+            return dt.datetime(2026, 9, 11)
+
+    monkeypatch.setattr(routes_mod, "datetime", _FixedToday)
 
     # 场景 A：今日是交易日但无 zt 数据（开盘前）→ 前一交易日
     monkeypatch.setattr(
@@ -388,8 +399,18 @@ def test_recent_date_time_aware(monkeypatch):
 
 def test_dashboard_dates_api(app, monkeypatch):
     """/api/dashboard/dates：返回最近交易日列表 + 时间感知默认日期。"""
+    import datetime as dt
+
     import daily_review.web.routes as routes_mod
     from daily_review.data import eastmoney_pool
+
+    # v0.38.7: 固定"今天"（同 test_recent_date_time_aware，mock 数据基准日 20260911）
+    class _FixedToday(dt.datetime):
+        @classmethod
+        def today(cls):
+            return dt.datetime(2026, 9, 11)
+
+    monkeypatch.setattr(routes_mod, "datetime", _FixedToday)
 
     monkeypatch.setattr(
         eastmoney_pool, "resolve_recent_trade_dates",
