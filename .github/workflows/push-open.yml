@@ -1,0 +1,40 @@
+name: push-open-report
+
+on:
+  # 09:25 开盘策略由本机 Windows 计划任务准点推送（v0.22，见 docs/飞书推送说明.md「本地准点推送」）
+  # GitHub Actions 排程会迟到（实测 30-60 分钟），对竞价后即时策略不合格，故摘除 schedule；
+  # 保留 workflow_dispatch 作为出差/手动云端补发兜底（Actions 页 → Run workflow）。
+  workflow_dispatch: {}
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # v0.36.2 供应链加固：action 锁 commit SHA（tag 可被重定向，SHA 不可变）
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Cache data directory
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: data
+          key: data-cache-${{ github.run_id }}
+          restore-keys: data-cache-
+
+      - name: Push open strategy
+        env:
+          # v0.35.3：只用官方 DeepSeek（DEEPSEEK_FALLBACK_API_KEY secret 存的就是官方 key，
+          # 直接借用作主 key；去掉商汤 SenseNova 主用 + DeepSeek 兜底的双配置）
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_FALLBACK_API_KEY }}
+          LLM_BASE_URL: https://api.deepseek.com
+          LLM_MODEL: deepseek-chat
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+        run: PYTHONPATH=src python -m daily_review push --type open

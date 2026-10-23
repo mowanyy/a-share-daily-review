@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+{% block title %}Agent 日志 · 每日复盘{% endblock %}
+{% block content %}
+<h1>Agent 日志 <span class="muted" style="font-weight:normal;font-size:0.85em">（v0.35：审计日志 + 工具调用链追踪）</span></h1>
+<style>
+.tab-bar { display:flex; gap:4px; margin-bottom:14px; flex-wrap:wrap; }
+.tab-bar button { padding:8px 16px; border:1px solid var(--border); border-radius:8px;
+  background:var(--panel); color:var(--ink-2); cursor:pointer; font-size:14px; }
+.tab-bar button.active { background:var(--accent); border-color:var(--accent); color:#fff; }
+.tab-panel { display:none; }
+.tab-panel.active { display:block; }
+.log-entry { padding:10px 12px; margin:6px 0; border:1px solid var(--border); border-radius:8px; background:var(--bg2); }
+.log-entry .meta { display:flex; gap:12px; flex-wrap:wrap; font-size:12px; color:var(--ink-3); margin-bottom:4px; }
+.log-entry .content { font-size:13px; white-space:pre-wrap; word-break:break-all; }
+.log-entry .tool-call { margin:4px 0 4px 16px; padding:6px 8px; background:var(--bg); border-radius:6px; font-size:12px; }
+.log-entry .tool-call .name { color:var(--accent); font-weight:600; }
+.entry-severity { padding:1px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+.severity-warning { background:rgba(210,153,34,.16); color:var(--warn); }
+.severity-alert { background:rgba(245,34,45,.12); color:var(--up); }
+.severity-info { background:rgba(31,111,235,.12); color:var(--chip); }
+.filter-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+.filter-row select { width:auto; min-width:120px; padding:6px 10px; }
+.filter-row .muted { font-size:12px; }
+</style>
+
+<div class="tab-bar" id="tabBar">
+  <button class="active" data-tab="messages">📨 消息记录</button>
+  <button data-tab="anomalies">⚠️ 异常事件</button>
+  <button data-tab="errors">❌ 错误日志</button>
+  <button data-tab="traces">🔍 工具调用链</button>
+</div>
+
+<!-- 📨 消息记录 -->
+<div class="tab-panel active" id="tab-messages">
+  <div class="filter-row">
+    <select id="chatIdFilter"><option value="">全部聊天</option></select>
+    <span class="muted" id="msgCount"></span>
+  </div>
+  <div id="messagesList"></div>
+</div>
+
+<!-- ⚠️ 异常事件 -->
+<div class="tab-panel" id="tab-anomalies">
+  <div class="filter-row">
+    <span class="muted" id="anomalyCount"></span>
+  </div>
+  <div id="anomaliesList"></div>
+</div>
+
+<!-- ❌ 错误日志 -->
+<div class="tab-panel" id="tab-errors">
+  <div class="filter-row">
+    <span class="muted" id="errorCount"></span>
+  </div>
+  <div id="errorsList"></div>
+</div>
+
+<!-- 🔍 工具调用链 -->
+<div class="tab-panel" id="tab-traces">
+  <div class="filter-row">
+    <span class="muted" id="traceCount"></span>
+  </div>
+  <div id="tracesList"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ---------- Tab 切换 ---------- */
+document.getElementById('tabBar').addEventListener('click', function(ev){
+  var btn = ev.target.closest('button');
+  if(!btn) return;
+  document.querySelectorAll('.tab-bar button').forEach(function(b){ b.classList.remove('active'); });
+  document.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.remove('active'); });
+  btn.classList.add('active');
+  document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  // 首次加载数据
+  var tab = btn.dataset.tab;
+  if(tab === 'messages' && !document.getElementById('messagesList').dataset.loaded) loadMessages();
+  if(tab === 'anomalies' && !document.getElementById('anomaliesList').dataset.loaded) loadAnomalies();
+  if(tab === 'errors' && !document.getElementById('errorsList').dataset.loaded) loadErrors();
+  if(tab === 'traces' && !document.getElementById('tracesList').dataset.loaded) loadTraces();
+});
+
+/* ---------- 消息记录 ---------- */
+function loadChatIds(){
+  api('/api/audit/chat-ids').then(function(d){
+    var sel = document.getElementById('chatIdFilter');
+    var ids = d.chat_ids || [];
+    ids.forEach(function(cid){
+      var o = document.createElement('option');
+      o.value = cid;
+      o.textContent = cid;
+      sel.appendChild(o);
+    });
+  }).catch(function(){});
+}
+function loadMessages(){
+  var el = document.getElementById('messagesList');
+  el.dataset.loaded = '1';
+  var chatId = document.getElementById('chatIdFilter').value;
+  var url = '/api/audit/messages?limit=100';
+  if(chatId) url += '&chat_id=' + encodeURIComponent(chatId);
+  api(url).then(function(d){
+    document.getElementById('msgCount').textContent = '共 ' + d.count + ' 条消息';
+    var items = d.messages || [];
+    if(!items.length){
+      el.innerHTML = '<span class="muted">暂无消息记录</span>';
+      return;
+    }
+    el.innerHTML = items.map(function(m){
+      return '<div class="log-entry">'
+        + '<div class="meta"><span>' + esc(m.role) + '</span><span>' + esc(m.created_at) + '</span></div>'
+        + '<div class="content">' + esc(m.content) + '</div></div>';
+    }).join('');
+  }).catch(function(e){ el.innerHTML = '<span class="err">加载失败：' + esc(e.message) + '</span>'; });
+}
+document.getElementById('chatIdFilter').onchange = loadMessages;
+
+/* ---------- 异常事件 ---------- */
+function loadAnomalies(){
+  var el = document.getElementById('anomaliesList');
+  el.dataset.loaded = '1';
+  api('/api/audit/anomalies?limit=100').then(function(d){
+    document.getElementById('anomalyCount').textContent = '共 ' + d.count + ' 条异常';
+    var items = d.anomalies || [];
+    if(!items.length){
+      el.innerHTML = '<span class="muted">暂无异常事件</span>';
+      return;
+    }
+    el.innerHTML = items.map(function(a){
+      var sevClass = 'severity-' + (a.severity || 'info');
+      var stocks = '';
+      if(a.stocks && a.stocks !== 'null'){
+        try { stocks = '股票：' + JSON.parse(a.stocks).join(', '); } catch(e) { stocks = a.stocks; }
+      }
+      return '<div class="log-entry">'
+        + '<div class="meta">'
+        + '<span class="entry-severity ' + sevClass + '">' + esc(a.severity || 'info') + '</span>'
+        + '<span>' + esc(a.type) + '</span>'
+        + '<span>' + esc(a.created_at) + '</span>'
+        + '</div>'
+        + '<div class="content">' + esc(a.message) + '</div>'
+        + (stocks ? '<div class="muted" style="margin-top:4px">' + esc(stocks) + '</div>' : '')
+        + '</div>';
+    }).join('');
+  }).catch(function(e){ el.innerHTML = '<span class="err">加载失败：' + esc(e.message) + '</span>'; });
+}
+
+/* ---------- 错误日志 ---------- */
+function loadErrors(){
+  var el = document.getElementById('errorsList');
+  el.dataset.loaded = '1';
+  api('/api/audit/errors?limit=100').then(function(d){
+    document.getElementById('errorCount').textContent = '共 ' + d.count + ' 条错误';
+    var items = d.errors || [];
+    if(!items.length){
+      el.innerHTML = '<span class="muted">暂无错误记录</span>';
+      return;
+    }
+    el.innerHTML = items.map(function(e){
+      return '<div class="log-entry">'
+        + '<div class="meta">'
+        + '<span class="err">' + esc(e.error_type) + '</span>'
+        + '<span>' + esc(e.source) + '</span>'
+        + '<span>' + esc(e.created_at) + '</span>'
+        + '</div>'
+        + '<div class="content">' + esc(e.message) + '</div></div>';
+    }).join('');
+  }).catch(function(e){ el.innerHTML = '<span class="err">加载失败：' + esc(e.message) + '</span>'; });
+}
+
+/* ---------- 工具调用链 ---------- */
+function loadTraces(){
+  var el = document.getElementById('tracesList');
+  el.dataset.loaded = '1';
+  api('/api/audit/traces?limit=50').then(function(d){
+    document.getElementById('traceCount').textContent = '共 ' + d.count + ' 条工具调用链';
+    var items = d.traces || [];
+    if(!items.length){
+      el.innerHTML = '<span class="muted">暂无工具调用记录</span>';
+      return;
+    }
+    el.innerHTML = items.map(function(t){
+      var traceData = null;
+      try { traceData = JSON.parse(t.trace_json); } catch(e) {}
+      var toolCallsHtml = '';
+      var totalMs = 0;
+      var planHtml = '';
+      if(traceData){
+        if(traceData.plan && traceData.plan.steps){
+          planHtml = '<div class="tool-call" style="border-left:3px solid var(--accent)">'
+            + '<div class="muted" style="margin-bottom:2px">📋 执行计划</div>'
+            + traceData.plan.steps.map(function(s){ return 'Step ' + s.step + ': ' + esc(s.action) + ' → ' + esc(s.tool || '分析'); }).join('<br>')
+            + '<div class="muted" style="margin-top:4px">' + esc(traceData.plan.reasoning) + '</div></div>';
+        }
+        toolCallsHtml = (traceData.tool_calls || []).map(function(tc){
+          totalMs += tc.duration_ms || 0;
+          return '<div class="tool-call">'
+            + '<span class="name">' + esc(tc.tool) + '</span>'
+            + ' <span class="muted">第' + tc.round + '轮 · ' + (tc.duration_ms || 0).toFixed(0) + 'ms</span>'
+            + '<br><span class="muted">参数：</span>' + esc(JSON.stringify(tc.args || {}))
+            + '<br><span class="muted">结果：</span>' + esc((tc.result_summary || '').slice(0, 150))
+            + '</div>';
+        }).join('');
+        if(traceData.retrieval_sources && traceData.retrieval_sources.length){
+          toolCallsHtml += '<div class="muted" style="margin-top:4px;padding-left:16px">📄 RAG 来源：' + traceData.retrieval_sources.join('; ') + '</div>';
+        }
+        if(traceData.total_rounds){
+          toolCallsHtml += '<div class="muted" style="margin-top:4px;padding-left:16px">共 ' + traceData.total_rounds + ' 轮 · ' + (traceData.total_duration_ms || 0).toFixed(0) + 'ms</div>';
+        }
+      }
+      return '<div class="log-entry">'
+        + '<div class="meta"><span>' + esc(t.created_at) + '</span>'
+        + (t.chat_id ? '<span>' + esc(t.chat_id) + '</span>' : '')
+        + '</div>'
+        + '<div class="content" style="margin-bottom:6px"><strong>Q：</strong>' + esc(t.question) + '</div>'
+        + planHtml
+        + toolCallsHtml
+        + '</div>';
+    }).join('');
+  }).catch(function(e){ el.innerHTML = '<span class="err">加载失败：' + esc(e.message) + '</span>'; });
+}
+
+/* ---------- 初始化 ---------- */
+loadChatIds();
+loadMessages();
+</script>
+{% endblock %}
